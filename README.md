@@ -88,8 +88,12 @@ Create `docs/phase1-setup.md`:
 # Dry run - validate plan without executing
 debussy run docs/master-plan.md --dry-run
 
-# Full run with default model (sonnet)
+# Full run with default model (sonnet) - interactive mode
 debussy run docs/master-plan.md
+
+# YOLO mode - no interactive dashboard (for CI/automation)
+debussy run docs/master-plan.md --yolo
+debussy run docs/master-plan.md --no-interactive
 
 # Use haiku for faster/cheaper execution
 debussy run docs/master-plan.md --model haiku
@@ -114,10 +118,12 @@ Start orchestrating a master plan.
 debussy run <master-plan.md> [options]
 
 Options:
-  --dry-run, -n     Parse and validate only, don't execute
-  --phase, -p       Start from specific phase ID
-  --model, -m       Claude model: haiku, sonnet, opus (default: sonnet)
-  --output, -o      Output mode: terminal, file, both (default: terminal)
+  --dry-run, -n       Parse and validate only, don't execute
+  --phase, -p         Start from specific phase ID
+  --model, -m         Claude model: haiku, sonnet, opus (default: sonnet)
+  --output, -o        Output mode: terminal, file, both (default: terminal)
+  --no-interactive    YOLO mode: disable interactive dashboard (for CI)
+  --yolo              Alias for --no-interactive
 ```
 
 ### `debussy status`
@@ -162,14 +168,71 @@ timeout: 1800          # Phase timeout in seconds (default: 30 min)
 max_retries: 2         # Max retry attempts per phase
 model: sonnet          # Default model: haiku, sonnet, opus
 output: terminal       # Output mode: terminal, file, both
+interactive: true      # Interactive dashboard (default: true)
 strict_compliance: true
 
 notifications:
   enabled: true
   provider: desktop    # desktop, ntfy, none
+  ntfy_server: "https://ntfy.sh"  # For ntfy provider
+  ntfy_topic: "claude-debussy"    # For ntfy provider
 ```
 
 When using `file` or `both` output modes, logs are saved to `.debussy/logs/run_{id}_phase_{n}.log`.
+
+## Interactive Mode
+
+By default, Debussy runs with an interactive dashboard that shows real-time progress:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Debussy │ Phase 2/5: Backend API │ ● Running │ ⏱ 00:12:34        │
+│  [s]tatus  [p]ause  [v]erbose (on)  [k]skip  [q]uit               │
+├─────────────────────────────────────────────────────────────────────┤
+│ > Reading src/api/routes.py                                         │
+│ > Edit: src/api/routes.py:45-52                                     │
+│ > Running gate: ruff check... ✓                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Hotkeys
+
+| Key | Action |
+|-----|--------|
+| `s` | Show detailed status (phase info, gates, progress) |
+| `p` | Pause/resume orchestration |
+| `v` | Toggle verbose logging on/off |
+| `k` | Skip current phase (with confirmation) |
+| `q` | Quit gracefully (saves state for resume) |
+
+### YOLO Mode
+
+For CI/automation, disable the interactive dashboard:
+
+```bash
+debussy run plan.md --yolo
+debussy run plan.md --no-interactive
+```
+
+## Notifications
+
+Debussy supports desktop and push notifications:
+
+### Desktop Notifications (default)
+Cross-platform via plyer (Windows, macOS, Linux):
+```yaml
+notifications:
+  provider: desktop
+```
+
+### ntfy Push Notifications
+HTTP-based push to ntfy.sh or self-hosted:
+```yaml
+notifications:
+  provider: ntfy
+  ntfy_server: "https://ntfy.sh"
+  ntfy_topic: "my-debussy"
+```
 
 ## Phase File Format
 
