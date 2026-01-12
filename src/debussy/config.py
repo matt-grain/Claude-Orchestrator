@@ -27,6 +27,7 @@ class Config(BaseModel):
     output: Literal["terminal", "file", "both"] = Field(
         default="terminal", description="Output mode: terminal, file, or both"
     )
+    interactive: bool = Field(default=True, description="Interactive mode with dashboard UI")
     notifications: NotificationConfig = Field(default_factory=NotificationConfig)
     strict_compliance: bool = Field(default=True, description="Fail on any compliance issue")
 

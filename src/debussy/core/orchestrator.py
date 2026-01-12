@@ -23,6 +23,12 @@ from debussy.parsers.master import parse_master_plan
 from debussy.parsers.phase import parse_phase
 from debussy.runners.claude import ClaudeRunner
 from debussy.runners.gates import GateRunner
+from debussy.ui.interactive import (
+    InteractiveUI,
+    NonInteractiveUI,
+    UIState,
+    UserAction,
+)
 
 if TYPE_CHECKING:
     from debussy.core.models import ComplianceIssue
@@ -61,6 +67,11 @@ class Orchestrator:
             self.notifier = self._create_notifier()
         else:
             self.notifier = notifier
+
+        # Initialize UI based on config
+        self.ui: InteractiveUI | NonInteractiveUI = (
+            InteractiveUI() if self.config.interactive else NonInteractiveUI()
+        )
 
         # Parse master plan
         self.plan: MasterPlan | None = None
@@ -143,6 +154,9 @@ class Orchestrator:
             f"Run ID: {run_id}, Plan: {self.plan.name}",
         )
 
+        # Start interactive UI
+        self.ui.start(self.plan.name, len(self.plan.phases))
+
         try:
             phases_to_run = self.plan.phases
             if start_phase:
@@ -153,19 +167,29 @@ class Orchestrator:
                 )
                 phases_to_run = phases_to_run[start_idx:]
 
-            for phase in phases_to_run:
+            for idx, phase in enumerate(phases_to_run, 1):
+                # Check for user actions before each phase
+                if await self._handle_user_action(run_id, phase):
+                    continue  # Phase was skipped
+
                 if not self._dependencies_met(phase):
                     self.notifier.warning(
                         f"Phase {phase.id} Skipped",
                         "Dependencies not met",
                     )
+                    self.ui.log(f"[dim]Phase {phase.id} skipped: dependencies not met[/dim]")
                     continue
+
+                # Update UI for new phase
+                self.ui.set_phase(phase, idx)
+                self.ui.set_state(UIState.RUNNING)
 
                 self.state.set_current_phase(run_id, phase.id)
                 success = await self._execute_phase_with_compliance(run_id, phase)
 
                 if not success:
                     self.state.update_run_status(run_id, RunStatus.FAILED)
+                    self.ui.stop()
                     return run_id
 
             self.state.update_run_status(run_id, RunStatus.COMPLETED)
@@ -174,12 +198,84 @@ class Orchestrator:
                 "All phases completed successfully",
             )
 
+        except KeyboardInterrupt:
+            self.state.update_run_status(run_id, RunStatus.PAUSED)
+            self.notifier.warning("Orchestration Paused", "Interrupted by user")
+            self.ui.log_raw("[yellow]Orchestration paused by user[/yellow]")
         except Exception as e:
             self.state.update_run_status(run_id, RunStatus.FAILED)
             self.notifier.error("Orchestration Failed", str(e))
             raise
+        finally:
+            self.ui.stop()
 
         return run_id
+
+    async def _handle_user_action(self, run_id: str, phase: Phase) -> bool:
+        """Handle pending user actions.
+
+        Args:
+            run_id: Current run ID
+            phase: Phase about to execute
+
+        Returns:
+            True if the phase should be skipped
+        """
+        while True:
+            action = self.ui.get_pending_action()
+
+            if action == UserAction.NONE:
+                return False
+
+            if action == UserAction.STATUS:
+                self._show_status_details(run_id, phase)
+            elif action == UserAction.PAUSE:
+                await self._handle_pause(run_id, phase)
+            elif action == UserAction.TOGGLE_VERBOSE:
+                self.ui.toggle_verbose()
+            elif action == UserAction.SKIP:
+                if self.ui.confirm(f"Skip phase {phase.id}?"):
+                    self.ui.log_raw(f"[yellow]Skipping phase {phase.id}[/yellow]")
+                    return True
+            elif action == UserAction.QUIT and self.ui.confirm("Quit orchestration?"):
+                self.state.update_run_status(run_id, RunStatus.PAUSED)
+                raise KeyboardInterrupt
+
+    async def _handle_pause(self, run_id: str, phase: Phase) -> None:
+        """Handle pause action and wait for resume."""
+        self.ui.set_state(UIState.PAUSED)
+        self.ui.log_raw("[yellow]Paused. Press 'p' to resume.[/yellow]")
+        self.state.update_run_status(run_id, RunStatus.PAUSED)
+
+        while True:
+            await asyncio.sleep(0.1)
+            next_action = self.ui.get_pending_action()
+            if next_action == UserAction.RESUME:
+                self.ui.set_state(UIState.RUNNING)
+                self.ui.log_raw("[green]Resumed.[/green]")
+                self.state.update_run_status(run_id, RunStatus.RUNNING)
+                return
+            if next_action == UserAction.QUIT:
+                self.state.update_run_status(run_id, RunStatus.PAUSED)
+                raise KeyboardInterrupt
+            if next_action == UserAction.STATUS:
+                self._show_status_details(run_id, phase)
+
+    def _show_status_details(self, run_id: str, phase: Phase) -> None:
+        """Show detailed status information."""
+        assert self.plan is not None
+
+        # Calculate completed phases
+        completed = sum(1 for p in self.plan.phases if p.status == PhaseStatus.COMPLETED)
+
+        details = {
+            "Run ID": run_id,
+            "Plan": self.plan.name,
+            "Current Phase": f"{phase.id}: {phase.title}",
+            "Progress": f"{completed}/{len(self.plan.phases)} phases completed",
+            "Gates": ", ".join(g.name for g in phase.gates) if phase.gates else "None",
+        }
+        self.ui.show_status_popup(details)
 
     async def _execute_phase_with_compliance(
         self,

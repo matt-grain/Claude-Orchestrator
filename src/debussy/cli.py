@@ -45,6 +45,7 @@ def _display_banner(
     output: str,
     max_retries: int,
     timeout: int,
+    interactive: bool = True,
 ) -> None:
     """Display the startup banner with plan info."""
     # ASCII art
@@ -62,6 +63,9 @@ def _display_banner(
     info_left = f"[bold]Output:[/bold] {output}"
     info_right = f"[bold]Timeout:[/bold] {timeout // 60}min"
     console.print(f"  {info_left:<40} {info_right}")
+
+    mode_str = "[green]Interactive[/green]" if interactive else "[yellow]YOLO[/yellow]"
+    console.print(f"  [bold]Mode:[/bold] {mode_str}")
 
     # Phase table
     console.print()
@@ -115,6 +119,14 @@ def run(
         str,
         typer.Option("--output", "-o", help="Output mode: terminal, file, both"),
     ] = "terminal",
+    no_interactive: Annotated[
+        bool,
+        typer.Option(
+            "--no-interactive",
+            "--yolo",
+            help="YOLO mode: disable interactive dashboard (for CI/automation)",
+        ),
+    ] = False,
 ) -> None:
     """Start orchestrating a master plan."""
     if dry_run:
@@ -124,7 +136,8 @@ def run(
     # Create config with overrides
     from debussy.config import Config
 
-    config = Config(model=model, output=output)  # type: ignore[arg-type]
+    interactive = not no_interactive
+    config = Config(model=model, output=output, interactive=interactive)  # type: ignore[arg-type]
 
     # Parse plan and display banner
     plan = parse_master_plan(master_plan)
@@ -135,6 +148,7 @@ def run(
         output=output,
         max_retries=config.max_retries,
         timeout=config.timeout,
+        interactive=interactive,
     )
 
     if phase:

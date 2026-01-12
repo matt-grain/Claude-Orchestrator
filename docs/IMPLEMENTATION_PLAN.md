@@ -590,13 +590,49 @@ topic = "my-debussy"
 - [x] Phase table with status and dependencies (v0.1.1)
 - [x] Colored status indicators (v0.1.1)
 - [x] Run history display (v0.1.0)
-- [ ] Progress bars for phase execution
-- [ ] Live status table during execution
 
-#### 2.5 Interactive Mode
-- [ ] `--interactive` flag for manual approval between phases
-- [ ] Prompt before risky phases
-- [ ] Option to skip/retry phases
+#### 2.5 Interactive Mode (Default)
+
+Interactive mode is the **default** behavior. Use `--no-interactive` (YOLO mode) for CI/automation.
+
+**Live Dashboard UI:**
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Debussy │ Phase 2/5: Backend API │ ● Running │ ⏱ 00:12:34        │
+│  [s]tatus  [p]ause  [v]erbose on/off  [k]skip  [q]uit              │
+├─────────────────────────────────────────────────────────────────────┤
+│ > Reading src/api/routes.py                                         │
+│ > Edit: src/api/routes.py:45-52                                     │
+│ > Running gate: ruff check... ✓                                     │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Features:**
+- [x] Sticky header with phase info, status, elapsed time
+- [x] Hotkey bar showing available actions
+- [x] Scrolling log panel for real-time output
+- [x] Keyboard listener thread for input handling (Windows/Unix)
+- [x] Event queue processed at safe points
+
+**Hotkeys:**
+| Key | Action |
+|-----|--------|
+| `s` | Detailed status popup (gates, files modified, etc.) |
+| `p` | Pause/resume after current operation |
+| `v` | Toggle verbose logging on/off |
+| `k` | Skip current phase |
+| `q` | Graceful quit (save state) |
+
+**Implementation:**
+- [x] `InteractiveUI` class using Rich Panel + Live
+- [x] `NonInteractiveUI` class for YOLO mode
+- [x] `KeyboardHandler` thread for non-blocking input
+- [x] `--no-interactive` / `--yolo` flag for CI/automation
+- [x] Status popup with detailed phase info
+- [x] Pause/resume functionality
+- [x] Skip phase with confirmation
+- [x] Graceful shutdown on quit
 
 ---
 
