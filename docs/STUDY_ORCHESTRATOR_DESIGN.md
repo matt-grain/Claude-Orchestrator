@@ -1,4 +1,4 @@
-# Claude Orchestrator Design Study
+# Claude Debussy Design Study
 
 **Created:** 2026-01-12
 **Author:** Anima + Matt
@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-Build a Python-based orchestrator to automate multi-phase implementation workflows with Claude Code CLI. The system should manage phase execution, validation gates, state persistence, and inter-phase context transfer.
+Build a Python-based debussy to automate multi-phase implementation workflows with Claude Code CLI. The system should manage phase execution, validation gates, state persistence, and inter-phase context transfer.
 
 **Inspiration:** Ralph Wiggum (Claude plugin) - a while-true loop pattern where each iteration sees previous work results, continuing until completion.
 
@@ -72,7 +72,7 @@ Master Plan (assessment-service-refactor-master.md)
 
 ```
 ┌─────────────────────────────────────────────┐
-│           orchestrator.py                   │
+│           debussy.py                   │
 │                                             │
 │  while phases_remaining:                    │
 │      phase = get_next_phase()               │
@@ -143,7 +143,7 @@ class Phase(BaseModel):
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
 
-class Orchestrator:
+class Debussy:
     def __init__(self, master_plan: Path):
         self.state_db = StateDB(master_plan.stem + ".db")
         self.phases = self.parse_master_plan(master_plan)
@@ -211,7 +211,7 @@ class Orchestrator:
 **Extension:** Optional parallel workers when phases allow
 
 ```python
-class Orchestrator:
+class Debussy:
     def __init__(self, master_plan: Path, max_workers: int = 1):
         self.max_workers = max_workers  # Default: sequential
         ...
@@ -251,7 +251,7 @@ subprocess.run(["claude", "--continue", session_file, "-p", "Continue..."])
 ```
 
 **Option 1C: MCP Server as coordination layer**
-- Orchestrator runs as MCP server
+- Debussy runs as MCP server
 - Claude connects and receives instructions
 - Bidirectional communication
 
@@ -261,7 +261,7 @@ subprocess.run(["claude", "--continue", session_file, "-p", "Continue..."])
 
 ### 2. Completion Detection
 
-**Question:** How does orchestrator know a phase is done?
+**Question:** How does debussy know a phase is done?
 
 **Option 2A: Marker file**
 ```python
@@ -284,7 +284,7 @@ while not marker_file.exists():
 ```
 
 **Option 2D: Explicit handoff command**
-- Orchestrator provides a `/handoff` or `/phase-complete` command
+- Debussy provides a `/handoff` or `/phase-complete` command
 - Claude invokes when done
 
 **Recommendation:** 2C (parse plan file) + 2D (explicit command) as backup.
@@ -295,7 +295,7 @@ while not marker_file.exists():
 
 **Question:** Who runs the validation gates?
 
-**Option 3A: Orchestrator runs gates externally**
+**Option 3A: Debussy runs gates externally**
 ```python
 def run_gates(phase: Phase) -> GateResult:
     for cmd in phase.gate_commands:
@@ -305,15 +305,15 @@ def run_gates(phase: Phase) -> GateResult:
     return GateResult.PASSED
 ```
 
-**Option 3B: Claude runs gates, orchestrator verifies**
+**Option 3B: Claude runs gates, debussy verifies**
 - Claude runs validation as part of process wrapper
-- Orchestrator re-runs to verify (trust but verify)
+- Debussy re-runs to verify (trust but verify)
 
 **Option 3C: Claude runs gates, reports results**
-- Orchestrator trusts Claude's self-reported results
+- Debussy trusts Claude's self-reported results
 - Only re-runs on failure for debugging
 
-**Recommendation:** 3B - Claude runs first (can fix issues), orchestrator verifies.
+**Recommendation:** 3B - Claude runs first (can fix issues), debussy verifies.
 
 ---
 
@@ -358,12 +358,12 @@ class PhaseContext:
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         CLI Interface                            │
-│  orchestrate run master.md [--parallel] [--phase N] [--dry-run] │
+│  debussy run master.md [--parallel] [--phase N] [--dry-run] │
 └───────────────────────────────┬─────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Orchestrator                              │
+│                        Debussy                              │
 │                                                                  │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
 │  │ PlanParser  │  │ StateManager│  │ PhaseExecutor           │  │
@@ -393,16 +393,16 @@ class PhaseContext:
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Outputs                                   │
 │                                                                  │
-│  📁 .orchestrator/                                               │
+│  📁 .debussy/                                               │
 │     ├── state.db              # SQLite state                     │
 │     ├── runs/                 # Run logs                         │
 │     │   └── 2026-01-12_143022/                                  │
 │     │       ├── phase1.log                                       │
 │     │       ├── phase1_gates.json                               │
 │     │       └── phase2.log                                       │
-│     └── config.toml           # Orchestrator settings            │
+│     └── config.toml           # Debussy settings            │
 │                                                                  │
-│  📁 claude-docs/plans/        # Updated by orchestrator          │
+│  📁 claude-docs/plans/        # Updated by debussy          │
 │     ├── master.md             # Status column updated            │
 │     └── phase*.md             # Status field updated             │
 │                                                                  │
@@ -558,25 +558,25 @@ class GateRunner:
 
 ```bash
 # Run all phases sequentially
-orchestrate run plans/feature-master.md
+debussy run plans/feature-master.md
 
 # Run specific phase only
-orchestrate run plans/feature-master.md --phase 2
+debussy run plans/feature-master.md --phase 2
 
 # Dry run (parse and validate only)
-orchestrate run plans/feature-master.md --dry-run
+debussy run plans/feature-master.md --dry-run
 
 # Run with parallel workers (for independent phases)
-orchestrate run plans/feature-master.md --parallel --workers 3
+debussy run plans/feature-master.md --parallel --workers 3
 
 # Resume after pause/failure
-orchestrate resume
+debussy resume
 
 # Show status
-orchestrate status
+debussy status
 
 # Interactive mode (confirm before each phase)
-orchestrate run plans/feature-master.md --interactive
+debussy run plans/feature-master.md --interactive
 ```
 
 ---
@@ -604,7 +604,7 @@ retry_backoff: Literal["none", "linear", "exponential"] = "linear"
 
 ### Q3: Notification Integration
 
-Should the orchestrator notify humans?
+Should the debussy notify humans?
 
 - Slack webhook on completion/failure?
 - Desktop notification?
@@ -630,7 +630,7 @@ Should we limit concurrent Claude sessions? Cost considerations?
 
 How does this interact with the existing agent system (task-validator, doc-sync-manager, etc.)?
 
-- Orchestrator invokes agents?
+- Debussy invokes agents?
 - Agents are used within Claude session?
 - Separate orchestration layer?
 
@@ -674,7 +674,7 @@ How does this interact with the existing agent system (task-validator, doc-sync-
 ### Why Not Extend Claude Code Directly?
 
 - Separation of concerns
-- Can orchestrate non-Claude tools too
+- Can debussy non-Claude tools too
 - Independent evolution
 
 ### Why Not Use Existing Workflow Tools (Temporal, Airflow)?

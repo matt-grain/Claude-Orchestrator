@@ -107,9 +107,9 @@ wheels = [
 ]
 
 [[package]]
-name = "claude-orchestrator"
+name = "claude-debussy"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
     { name = "httpx" },

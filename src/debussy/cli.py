@@ -1,4 +1,4 @@
-"""CLI interface for the orchestrator."""
+"""CLI interface for the debussy."""
 
 from __future__ import annotations
 
@@ -10,19 +10,81 @@ from typing import Annotated
 import typer
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
-from orchestrator.config import get_orchestrator_dir
-from orchestrator.core.models import CompletionSignal, PhaseStatus, RunStatus
-from orchestrator.core.orchestrator import run_orchestration
-from orchestrator.core.state import StateManager
-from orchestrator.parsers.master import parse_master_plan
+from debussy.config import get_orchestrator_dir
+from debussy.core.models import CompletionSignal, PhaseStatus, RunStatus
+from debussy.core.orchestrator import run_orchestration
+from debussy.core.state import StateManager
+from debussy.parsers.master import parse_master_plan
+
+__version__ = "0.1.1"
 
 app = typer.Typer(
-    name="orchestrate",
+    name="debussy",
     help="Orchestrate multi-phase Claude CLI sessions with compliance verification.",
     no_args_is_help=True,
 )
 console = Console()
+
+BANNER = r"""
+
+██████╗ ███████╗██████╗ ██╗   ██╗███████╗███████╗██╗   ██╗
+██╔══██╗██╔════╝██╔══██╗██║   ██║██╔════╝██╔════╝╚██╗ ██╔╝
+██║  ██║█████╗  ██████╔╝██║   ██║███████╗███████╗ ╚████╔╝
+██║  ██║██╔══╝  ██╔══██╗██║   ██║╚════██║╚════██║  ╚██╔╝
+██████╔╝███████╗██████╔╝╚██████╔╝███████║███████║   ██║
+╚═════╝ ╚══════╝╚═════╝  ╚═════╝ ╚══════╝╚══════╝   ╚═╝
+"""
+
+
+def _display_banner(
+    plan_name: str,
+    phases: list,
+    model: str,
+    output: str,
+    max_retries: int,
+    timeout: int,
+) -> None:
+    """Display the startup banner with plan info."""
+    # ASCII art
+    console.print(Text(BANNER, style="bold cyan"))
+
+    # Info line
+    info_left = f"[bold]Plan:[/bold] {plan_name}"
+    info_right = f"[bold]Model:[/bold] {model}"
+    console.print(f"  {info_left:<40} {info_right}")
+
+    info_left = f"[bold]Phases:[/bold] {len(phases)}"
+    info_right = f"[bold]Retries:[/bold] {max_retries}"
+    console.print(f"  {info_left:<40} {info_right}")
+
+    info_left = f"[bold]Output:[/bold] {output}"
+    info_right = f"[bold]Timeout:[/bold] {timeout // 60}min"
+    console.print(f"  {info_left:<40} {info_right}")
+
+    # Phase table
+    console.print()
+    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+    table.add_column("Phase", style="cyan", width=6)
+    table.add_column("Title", width=25)
+    table.add_column("Status", width=10)
+    table.add_column("Dependencies", width=20)
+
+    for phase in phases:
+        deps = ", ".join(phase.depends_on) if phase.depends_on else "-"
+        status_style = "dim" if phase.status == PhaseStatus.PENDING else "yellow"
+        table.add_row(
+            phase.id,
+            phase.title[:24] + "..." if len(phase.title) > 24 else phase.title,
+            f"[{status_style}]{phase.status.value}[/{status_style}]",
+            deps,
+        )
+
+    console.print(table)
+    console.print()
+    console.print("[dim]─" * 60 + "[/dim]")
+    console.print()
 
 
 @app.command()
@@ -49,28 +111,42 @@ def run(
         str,
         typer.Option("--model", "-m", help="Claude model: haiku, sonnet, opus"),
     ] = "sonnet",
+    output: Annotated[
+        str,
+        typer.Option("--output", "-o", help="Output mode: terminal, file, both"),
+    ] = "terminal",
 ) -> None:
     """Start orchestrating a master plan."""
     if dry_run:
         _dry_run(master_plan)
         return
 
-    console.print("[bold blue]Starting orchestration[/bold blue]")
-    console.print(f"  Master plan: {master_plan}")
-    console.print(f"  Model: {model}")
+    # Create config with overrides
+    from debussy.config import Config
+
+    config = Config(model=model, output=output)  # type: ignore[arg-type]
+
+    # Parse plan and display banner
+    plan = parse_master_plan(master_plan)
+    _display_banner(
+        plan_name=plan.name,
+        phases=plan.phases,
+        model=model,
+        output=output,
+        max_retries=config.max_retries,
+        timeout=config.timeout,
+    )
+
     if phase:
-        console.print(f"  Starting from phase: {phase}")
-
-    # Create config with model override
-    from orchestrator.config import Config
-
-    config = Config(model=model)
+        console.print(f"[yellow]Starting from phase: {phase}[/yellow]\n")
 
     try:
         run_id = run_orchestration(master_plan, start_phase=phase, config=config)
-        console.print(f"\n[green]Orchestration completed. Run ID: {run_id}[/green]")
+        console.print(f"\n[bold green]Orchestration completed. Run ID: {run_id}[/bold green]")
+        if output in ("file", "both"):
+            console.print("[dim]Logs saved to: .debussy/logs/[/dim]")
     except Exception as e:
-        console.print(f"\n[red]Orchestration failed: {e}[/red]")
+        console.print(f"\n[bold red]Orchestration failed: {e}[/bold red]")
         raise typer.Exit(1) from e
 
 
@@ -320,7 +396,7 @@ def _dry_run(master_plan: Path) -> None:
         table.add_column("Gates")
         table.add_column("Required Agents")
 
-        from orchestrator.parsers.phase import parse_phase
+        from debussy.parsers.phase import parse_phase
 
         for phase in plan.phases:
             deps = ", ".join(phase.depends_on) if phase.depends_on else "-"

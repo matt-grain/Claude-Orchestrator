@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from orchestrator.core.models import (
+from debussy.core.models import (
     CompletionSignal,
     GateResult,
     MasterPlan,

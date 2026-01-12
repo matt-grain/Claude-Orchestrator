@@ -1,4 +1,4 @@
-# Manual Test Plan - Claude Orchestrator v0.1.0
+# Manual Test Plan - Claude Debussy v0.1.0
 
 **Purpose:** Validate end-to-end orchestration flow before production use.
 
@@ -8,11 +8,11 @@
 
 ```bash
 # Ensure package is installed
-cd C:\Projects\Claude-Orchestrator
+cd C:\Projects\Claude-Debussy
 uv pip install -e .
 
 # Verify CLI is available
-uv run orchestrate --help
+uv run debussy --help
 ```
 
 ---
@@ -24,9 +24,9 @@ uv run orchestrate --help
 ### Setup
 Create a test project directory:
 ```bash
-mkdir -p /tmp/test-orchestrator
-cd /tmp/test-orchestrator
-uv add --dev "claude-orchestrator @ file:///C:/Projects/Claude-Orchestrator"
+mkdir -p /tmp/test-debussy
+cd /tmp/test-debussy
+uv add --dev "claude-debussy @ file:///C:/Projects/Claude-Debussy"
 ```
 
 ### Create Test Master Plan
@@ -41,7 +41,7 @@ Create `test-master.md`:
 
 ## Overview
 
-Add a simple calculator module for testing orchestrator.
+Add a simple calculator module for testing debussy.
 
 ## Phases
 
@@ -114,7 +114,7 @@ Create `phase2-logic.md`:
 
 ### Execute Dry Run
 ```bash
-uv run orchestrate run test-master.md --dry-run
+uv run debussy run test-master.md --dry-run
 ```
 
 ### Expected Result
@@ -131,7 +131,7 @@ uv run orchestrate run test-master.md --dry-run
 **Goal:** Verify status works with no runs.
 
 ```bash
-uv run orchestrate status
+uv run debussy status
 ```
 
 ### Expected Result
@@ -145,7 +145,7 @@ uv run orchestrate status
 **Goal:** Verify history works with no runs.
 
 ```bash
-uv run orchestrate history
+uv run debussy history
 ```
 
 ### Expected Result
@@ -163,20 +163,20 @@ Ensure test project from Test 1 exists.
 
 ### Execute
 ```bash
-cd /tmp/test-orchestrator
-uv run orchestrate run test-master.md
+cd /tmp/test-debussy
+uv run debussy run test-master.md
 ```
 
 ### During Execution
-The orchestrator will spawn Claude sessions. In each session:
+The debussy will spawn Claude sessions. In each session:
 1. Claude should see the phase prompt
 2. Claude should complete tasks
-3. Claude should call `orchestrate done --phase X --status completed`
+3. Claude should call `debussy done --phase X --status completed`
 
 ### Monitor Progress
 In another terminal:
 ```bash
-uv run orchestrate status
+uv run debussy status
 ```
 
 ### Expected Results
@@ -185,7 +185,7 @@ uv run orchestrate status
 - [ ] Phase 2 starts (depends on Phase 1)
 - [ ] Phase 2 completes
 - [ ] Overall run status: COMPLETED
-- [ ] State persisted in `.orchestrator/state.db`
+- [ ] State persisted in `.debussy/state.db`
 
 ---
 
@@ -195,7 +195,7 @@ uv run orchestrate status
 
 While Test 4 is running:
 ```bash
-uv run orchestrate status
+uv run debussy status
 ```
 
 ### Expected Result
@@ -211,7 +211,7 @@ uv run orchestrate status
 **Goal:** Verify run history is recorded.
 
 ```bash
-uv run orchestrate history
+uv run debussy history
 ```
 
 ### Expected Result
@@ -227,7 +227,7 @@ uv run orchestrate history
 **Goal:** Verify resume handles no paused runs gracefully.
 
 ```bash
-uv run orchestrate resume
+uv run debussy resume
 ```
 
 ### Expected Result
@@ -242,17 +242,17 @@ uv run orchestrate resume
 
 ### Start a Run
 ```bash
-uv run orchestrate run test-master.md &
+uv run debussy run test-master.md &
 ```
 
 ### Send Manual Done Signal
 ```bash
-uv run orchestrate done --phase 1 --status completed
+uv run debussy done --phase 1 --status completed
 ```
 
 ### Expected Result
 - [ ] Signal recorded
-- [ ] Orchestrator continues to next phase
+- [ ] Debussy continues to next phase
 
 ---
 
@@ -261,12 +261,12 @@ uv run orchestrate done --phase 1 --status completed
 **Goal:** Test blocked completion signal.
 
 ```bash
-uv run orchestrate done --phase 1 --status blocked --reason "Missing dependency"
+uv run debussy done --phase 1 --status blocked --reason "Missing dependency"
 ```
 
 ### Expected Result
 - [ ] Signal recorded with reason
-- [ ] Orchestrator handles appropriately
+- [ ] Debussy handles appropriately
 
 ---
 
@@ -275,8 +275,8 @@ uv run orchestrate done --phase 1 --status blocked --reason "Missing dependency"
 **Goal:** Test progress logging for stuck detection.
 
 ```bash
-uv run orchestrate progress --phase 1 --step "implementation:started"
-uv run orchestrate progress --phase 1 --step "implementation:50%"
+uv run debussy progress --phase 1 --step "implementation:started"
+uv run debussy progress --phase 1 --step "implementation:50%"
 ```
 
 ### Expected Result
@@ -298,7 +298,7 @@ Edit `phase1-setup.md` to add a failing gate:
 
 ### Execute
 ```bash
-uv run orchestrate run test-master.md
+uv run debussy run test-master.md
 ```
 
 ### Expected Results
@@ -336,10 +336,10 @@ Run orchestration, but in the Claude session, don't invoke the agent.
 **Goal:** Verify state survives restart.
 
 1. Start a run
-2. Kill the orchestrator mid-run (Ctrl+C)
+2. Kill the debussy mid-run (Ctrl+C)
 3. Check status:
 ```bash
-uv run orchestrate status
+uv run debussy status
 ```
 
 ### Expected Result
@@ -355,12 +355,12 @@ uv run orchestrate status
 
 1. Start a run:
 ```bash
-uv run orchestrate run test-master.md &
+uv run debussy run test-master.md &
 ```
 
 2. Try to start another:
 ```bash
-uv run orchestrate run test-master.md
+uv run debussy run test-master.md
 ```
 
 ### Expected Result
@@ -393,6 +393,6 @@ uv run orchestrate run test-master.md
 ## Notes
 
 - All tests should be run from the test project directory
-- State is stored in `.orchestrator/state.db` relative to project root
+- State is stored in `.debussy/state.db` relative to project root
 - Logs can help debug issues
-- Clean state between test runs if needed: `rm -rf .orchestrator/`
+- Clean state between test runs if needed: `rm -rf .debussy/`

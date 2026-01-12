@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from orchestrator.core.models import Gate, Phase, PhaseStatus, Task
+from debussy.core.models import Gate, Phase, PhaseStatus, Task
 
 
 def parse_phase(phase_path: Path, phase_id: str | None = None) -> Phase:

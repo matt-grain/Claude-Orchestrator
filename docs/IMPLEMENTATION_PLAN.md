@@ -1,18 +1,38 @@
-# Claude Orchestrator - Implementation Plan
+# Claude Debussy - Implementation Plan
 
 **Created:** 2026-01-12
-**Status:** Ready for Implementation
+**Status:** v0.1.1 Released
+**Version:** 0.1.1
 **Study:** [STUDY_ORCHESTRATOR_DESIGN.md](STUDY_ORCHESTRATOR_DESIGN.md)
+
+---
+
+## Release History
+
+### v0.1.1 (2026-01-12)
+- **ASCII Banner**: Beautiful startup banner with plan info and phase table
+- **--output flag**: Choose output mode (terminal, file, both)
+- **--model flag**: Select Claude model (haiku, sonnet, opus)
+- **Log files**: Per-phase logs saved to `.debussy/logs/` when using file output
+- **Bug fixes**: Streaming output format, state persistence, dependency tracking, notes path resolution
+
+### v0.1.0 (2026-01-12)
+- Initial release with full MVP functionality
+- Master plan and phase parsing
+- Claude CLI spawning with streaming output
+- Compliance checker with remediation loops
+- SQLite state persistence
+- All quality gates passing (72 tests, 64% coverage)
 
 ---
 
 ## Architecture Summary
 
-Python-based orchestrator that spawns ephemeral Claude CLI sessions to execute implementation phases sequentially, with validation gates and state persistence.
+Python-based debussy that spawns ephemeral Claude CLI sessions to execute implementation phases sequentially, with validation gates and state persistence.
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│                    orchestrate CLI (Python)                         │
+│                    debussy CLI (Python)                         │
 │                                                                     │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌───────────┐ │
 │  │ PlanParser  │  │StateMachine │  │ClaudeSpawner│  │ Notifier  │ │
@@ -21,7 +41,7 @@ Python-based orchestrator that spawns ephemeral Claude CLI sessions to execute i
 │         │                │                │                │       │
 │         ▼                ▼                ▼                ▼       │
 │  ┌─────────────────────────────────────────────────────────────┐  │
-│  │                      Orchestrator                            │  │
+│  │                      Debussy                            │  │
 │  │  - Load master plan → parse phases                          │  │
 │  │  - For each phase: spawn Claude → wait → run gates          │  │
 │  │  - On completion/failure: notify + update state             │  │
@@ -31,12 +51,12 @@ Python-based orchestrator that spawns ephemeral Claude CLI sessions to execute i
          │ reads/writes                         │ spawns
          ▼                                      ▼
 ┌─────────────────┐                   ┌─────────────────────────────┐
-│ .orchestrator/  │                   │  Claude CLI Worker          │
+│ .debussy/  │                   │  Claude CLI Worker          │
 │   state.db      │                   │  - Phase plan as context    │
 │   config.toml   │                   │  - Previous notes injected  │
 │   runs/{id}/    │                   │  - Uses project agents      │
 │     logs...     │                   │  - LTM for cross-session    │
-└─────────────────┘                   │  - Calls `orchestrate done` │
+└─────────────────┘                   │  - Calls `debussy done` │
                                       └─────────────────────────────┘
 ```
 
@@ -45,7 +65,7 @@ Python-based orchestrator that spawns ephemeral Claude CLI sessions to execute i
 ## Project Structure
 
 ```
-claude-orchestrator/
+claude-debussy/
 ├── pyproject.toml
 ├── README.md
 ├── docs/
@@ -59,12 +79,12 @@ claude-orchestrator/
 │       └── notes/
 │           └── NOTES_TEMPLATE.md
 ├── src/
-│   └── orchestrator/
+│   └── debussy/
 │       ├── __init__.py
 │       ├── cli.py              # Typer CLI entry point
 │       ├── core/
 │       │   ├── __init__.py
-│       │   ├── orchestrator.py # Main orchestration logic
+│       │   ├── debussy.py # Main orchestration logic
 │       │   ├── state.py        # State machine + SQLite
 │       │   ├── models.py       # Pydantic models
 │       │   └── compliance.py   # Compliance checker
@@ -98,14 +118,14 @@ claude-orchestrator/
 
 ## Implementation Phases
 
-### Phase 1: Foundation (MVP)
+### Phase 1: Foundation (MVP) - ✅ COMPLETE
 
 **Goal:** Parse plans, run phases sequentially, basic state tracking
 
 #### 1.1 Project Setup
-- [ ] Update pyproject.toml with dependencies
-- [ ] Create src/orchestrator package structure
-- [ ] Setup CLI entry point with Typer
+- [x] Update pyproject.toml with dependencies
+- [x] Create src/debussy package structure
+- [x] Setup CLI entry point with Typer
 
 **Dependencies to add:**
 ```toml
@@ -117,12 +137,12 @@ dependencies = [
 ]
 ```
 
-#### 1.2 Models (src/orchestrator/core/models.py)
-- [ ] Define `MasterPlan` model
-- [ ] Define `Phase` model with status enum
-- [ ] Define `Gate` model
-- [ ] Define `Task` model
-- [ ] Define `RunState` model
+#### 1.2 Models (src/debussy/core/models.py)
+- [x] Define `MasterPlan` model
+- [x] Define `Phase` model with status enum
+- [x] Define `Gate` model
+- [x] Define `Task` model
+- [x] Define `RunState` model
 
 ```python
 from enum import Enum
@@ -167,10 +187,10 @@ class MasterPlan(BaseModel):
     created_at: datetime
 ```
 
-#### 1.3 Plan Parsers (src/orchestrator/parsers/)
-- [ ] Master plan parser: extract phase table
-- [ ] Phase parser: extract gates, tasks, notes paths
-- [ ] Handle frontmatter (YAML) if present
+#### 1.3 Plan Parsers (src/debussy/parsers/)
+- [x] Master plan parser: extract phase table
+- [x] Phase parser: extract gates, tasks, notes paths
+- [x] Handle frontmatter (YAML) if present
 
 **Master plan parsing targets:**
 ```markdown
@@ -189,11 +209,11 @@ class MasterPlan(BaseModel):
 - ruff: 0 errors
 ```
 
-#### 1.4 State Management (src/orchestrator/core/state.py)
-- [ ] SQLite connection manager
-- [ ] Create tables: runs, phase_executions, gate_results
-- [ ] CRUD operations for run state
-- [ ] Transaction support for atomic updates
+#### 1.4 State Management (src/debussy/core/state.py)
+- [x] SQLite connection manager
+- [x] Create tables: runs, phase_executions, gate_results
+- [x] CRUD operations for run state
+- [x] Transaction support for atomic updates
 
 ```python
 class StateManager:
@@ -205,12 +225,14 @@ class StateManager:
     def get_current_run(self) -> RunState | None: ...
 ```
 
-#### 1.5 Claude Runner (src/orchestrator/runners/claude.py)
-- [ ] Build prompt from phase + notes
-- [ ] Spawn Claude CLI subprocess
-- [ ] Capture stdout/stderr to log files
-- [ ] Handle timeout with configurable duration
-- [ ] Kill subprocess on timeout
+#### 1.5 Claude Runner (src/debussy/runners/claude.py)
+- [x] Build prompt from phase + notes
+- [x] Spawn Claude CLI subprocess
+- [x] Capture stdout/stderr to log files
+- [x] Handle timeout with configurable duration
+- [x] Kill subprocess on timeout
+- [x] Streaming JSON output parsing (v0.1.1)
+- [x] Dual output mode (terminal/file/both) (v0.1.1)
 
 ```python
 class ClaudeRunner:
@@ -232,16 +254,16 @@ Instructions:
 2. Complete all tasks in the Tasks section
 3. Run pre-validation commands until all pass
 4. Write notes to: {phase.notes_output}
-5. When complete, run: orchestrate done --phase {phase.id}
-6. If blocked, run: orchestrate done --phase {phase.id} --status blocked --reason "..."
+5. When complete, run: debussy done --phase {phase.id}
+6. If blocked, run: debussy done --phase {phase.id} --status blocked --reason "..."
 """
 ```
 
-#### 1.6 Gate Runner (src/orchestrator/runners/gates.py)
-- [ ] Parse gate commands from phase
-- [ ] Execute each gate command
-- [ ] Capture pass/fail + output
-- [ ] Return structured results
+#### 1.6 Gate Runner (src/debussy/runners/gates.py)
+- [x] Parse gate commands from phase
+- [x] Execute each gate command
+- [x] Capture pass/fail + output
+- [x] Return structured results
 
 ```python
 class GateRunner:
@@ -255,11 +277,13 @@ class GateRunner:
         return results
 ```
 
-#### 1.7 CLI Commands (src/orchestrator/cli.py)
-- [ ] `orchestrate run <master_plan>` - Start orchestration
-- [ ] `orchestrate status` - Show current run status
-- [ ] `orchestrate done --phase N [--status] [--reason]` - Signal completion (called by Claude)
-- [ ] `orchestrate resume` - Resume paused run
+#### 1.7 CLI Commands (src/debussy/cli.py)
+- [x] `debussy run <master_plan>` - Start orchestration
+- [x] `debussy status` - Show current run status
+- [x] `debussy done --phase N [--status] [--reason]` - Signal completion (called by Claude)
+- [x] `debussy resume` - Resume paused run
+- [x] `debussy history` - List past runs
+- [x] `debussy progress` - Log progress (for stuck detection)
 
 ```python
 import typer
@@ -284,13 +308,13 @@ def status():
     ...
 ```
 
-#### 1.8 Compliance Checker (src/orchestrator/core/compliance.py)
-- [ ] Define `ComplianceIssue` and `ComplianceResult` models
-- [ ] File-based checks (notes exist, structure valid)
-- [ ] Agent invocation detection (parse session logs)
-- [ ] Gate re-verification (always re-run, don't trust claims)
-- [ ] Progress file monitoring (stuck detection)
-- [ ] Remediation strategy determination
+#### 1.8 Compliance Checker (src/debussy/core/compliance.py)
+- [x] Define `ComplianceIssue` and `ComplianceResult` models
+- [x] File-based checks (notes exist, structure valid)
+- [x] Agent invocation detection (parse session logs)
+- [x] Gate re-verification (always re-run, don't trust claims)
+- [x] Progress file monitoring (stuck detection)
+- [x] Remediation strategy determination
 
 ```python
 class ComplianceIssueType(str, Enum):
@@ -404,16 +428,16 @@ class ComplianceChecker:
             return RemediationStrategy.WARN_AND_ACCEPT
 ```
 
-#### 1.9 Orchestrator with Compliance Loop (src/orchestrator/core/orchestrator.py)
-- [ ] Load master plan
-- [ ] Sequential phase execution loop
-- [ ] Completion detection via `orchestrate done` command
-- [ ] **Compliance verification after completion**
-- [ ] **Remediation loop (fresh sessions with state injection)**
-- [ ] Retry logic (configurable, default 2)
+#### 1.9 Debussy with Compliance Loop (src/debussy/core/debussy.py)
+- [x] Load master plan
+- [x] Sequential phase execution loop
+- [x] Completion detection via `debussy done` command
+- [x] **Compliance verification after completion**
+- [x] **Remediation loop (fresh sessions with state injection)**
+- [x] Retry logic (configurable, default 2)
 
 ```python
-class Orchestrator:
+class Debussy:
     def __init__(self, master_plan: Path, config: Config):
         self.plan = PlanParser.parse_master(master_plan)
         self.state = StateManager(self._get_db_path())
@@ -516,7 +540,7 @@ The previous attempt FAILED compliance checks.
 Read and follow: {phase.path}
 
 ## When Complete
-Run: orchestrate done --phase {phase.id} --report '{{...}}'
+Run: debussy done --phase {phase.id} --report '{{...}}'
 
 IMPORTANT: This is a remediation session. Follow the template EXACTLY.
 All required agents MUST be invoked via the Task tool.
@@ -529,14 +553,14 @@ All required agents MUST be invoked via the Task tool.
 
 **Goal:** Better UX, notifications, configuration
 
-#### 2.1 Configuration (src/orchestrator/config.py)
-- [ ] Load from `.orchestrator/config.toml`
-- [ ] Support project-level and user-level config
-- [ ] Configurable: timeout, max_retries, notification settings
+#### 2.1 Configuration (src/debussy/config.py)
+- [x] Load from `.debussy/config.yaml` (v0.1.0)
+- [x] Configurable: timeout, max_retries, model, output mode, notification settings (v0.1.1)
+- [ ] Support user-level config (~/.debussy/config.yaml)
 
 ```toml
-# .orchestrator/config.toml
-[orchestrator]
+# .debussy/config.toml
+[debussy]
 timeout = 1800  # 30 minutes
 max_retries = 2
 
@@ -546,24 +570,27 @@ provider = "desktop"  # or "ntfy"
 
 [notifications.ntfy]
 server = "https://ntfy.sh"
-topic = "my-orchestrator"
+topic = "my-debussy"
 ```
 
-#### 2.2 Desktop Notifications (src/orchestrator/notifications/desktop.py)
+#### 2.2 Desktop Notifications (src/debussy/notifications/desktop.py)
 - [ ] Windows toast notifications (win10toast or plyer)
 - [ ] macOS notifications (osascript or plyer)
 - [ ] Linux notifications (notify-send or plyer)
 
-#### 2.3 ntfy Integration (src/orchestrator/notifications/ntfy.py)
+#### 2.3 ntfy Integration (src/debussy/notifications/ntfy.py)
 - [ ] POST to ntfy server on events
 - [ ] Configurable server + topic
 - [ ] Priority levels for different events
 
 #### 2.4 Rich Terminal Output
+- [x] ASCII art banner at startup (v0.1.1)
+- [x] Plan info display (name, model, phases, retries, output mode, timeout)
+- [x] Phase table with status and dependencies (v0.1.1)
+- [x] Colored status indicators (v0.1.1)
+- [x] Run history display (v0.1.0)
 - [ ] Progress bars for phase execution
-- [ ] Live status table
-- [ ] Colored gate results
-- [ ] Run history display
+- [ ] Live status table during execution
 
 #### 2.5 Interactive Mode
 - [ ] `--interactive` flag for manual approval between phases
@@ -580,7 +607,7 @@ topic = "my-orchestrator"
 - [ ] Create docs/templates/plans/ with master + phase templates
 - [ ] Create docs/templates/notes/NOTES_TEMPLATE.md
 - [ ] Template variables: `{feature}`, `{phase_num}`, `{date}`
-- [ ] `orchestrate init <feature>` command to scaffold from templates
+- [ ] `debussy init <feature>` command to scaffold from templates
 
 #### 3.2 Notes Template
 
@@ -654,23 +681,32 @@ topic = "my-orchestrator"
 
 ```bash
 # Start orchestration
-orchestrate run path/to/master-plan.md
+debussy run path/to/master-plan.md
 
-# Start specific phase only
-orchestrate run path/to/master-plan.md --phase 2
+# Start from specific phase
+debussy run path/to/master-plan.md --phase 2
 
 # Dry run (parse and validate only)
-orchestrate run path/to/master-plan.md --dry-run
+debussy run path/to/master-plan.md --dry-run
 
-# Interactive mode (confirm each phase)
-orchestrate run path/to/master-plan.md --interactive
+# Select Claude model (haiku, sonnet, opus)
+debussy run path/to/master-plan.md --model haiku
+
+# Output mode: terminal (default), file, or both
+debussy run path/to/master-plan.md --output both
+
+# Combined example
+debussy run path/to/master-plan.md --model haiku --output file --phase 2
+
+# Interactive mode (confirm each phase) [NOT YET IMPLEMENTED]
+debussy run path/to/master-plan.md --interactive
 
 # Signal phase completion (called by Claude worker)
 # Simple completion:
-orchestrate done --phase 1
+debussy done --phase 1
 
 # With full compliance report (RECOMMENDED):
-orchestrate done --phase 1 --report '{
+debussy done --phase 1 --report '{
   "steps_completed": ["read_notes", "doc_sync", "implementation", "validation", "write_notes"],
   "agents_used": ["doc-sync-manager", "task-validator"],
   "files_modified": ["src/foo.py", "tests/test_foo.py"],
@@ -678,24 +714,24 @@ orchestrate done --phase 1 --report '{
 }'
 
 # If blocked:
-orchestrate done --phase 1 --status blocked --reason "Need legacy refactor first"
+debussy done --phase 1 --status blocked --reason "Need legacy refactor first"
 
 # Check status
-orchestrate status
-orchestrate status --run abc123
+debussy status
+debussy status --run abc123
 
 # Resume paused run (after human intervention)
-orchestrate resume
+debussy resume
 
 # Initialize new feature from templates
-orchestrate init my-feature --phases 3
+debussy init my-feature --phases 3
 
 # List past runs
-orchestrate history
+debussy history
 
 # Log progress during execution (optional, for stuck detection)
-orchestrate progress --phase 1 --step "implementation:started"
-orchestrate progress --phase 1 --step "task_validator:started"
+debussy progress --phase 1 --step "implementation:started"
+debussy progress --phase 1 --step "task_validator:started"
 ```
 
 ## Completion Report Schema
@@ -734,7 +770,7 @@ The `--report` JSON enables compliance verification:
 }
 ```
 
-The orchestrator will:
+The debussy will:
 1. **Verify claimed steps** against progress log (if available)
 2. **Verify agents_used** against session log (Task tool patterns)
 3. **Re-run all gates** independently (never trust self-reported results)
@@ -816,26 +852,28 @@ CREATE TABLE completion_signals (
 
 ## Success Criteria
 
-### MVP (Phase 1)
-- [ ] Can parse Grain_API assessment-service-refactor plans
-- [ ] Spawns Claude CLI for each phase
-- [ ] Detects completion via `orchestrate done`
-- [ ] Runs validation gates
-- [ ] **Compliance checker verifies template adherence**
-- [ ] **Detects skipped agents via session log parsing**
-- [ ] **Remediation loop spawns fresh sessions with state injection**
-- [ ] Tracks state in SQLite
-- [ ] Basic CLI works (`run`, `done`, `status`, `progress`)
+### MVP (Phase 1) - ✅ COMPLETE (v0.1.0)
+- [x] Can parse Grain_API assessment-service-refactor plans
+- [x] Spawns Claude CLI for each phase
+- [x] Detects completion via `debussy done`
+- [x] Runs validation gates
+- [x] **Compliance checker verifies template adherence**
+- [x] **Detects skipped agents via session log parsing**
+- [x] **Remediation loop spawns fresh sessions with state injection**
+- [x] Tracks state in SQLite
+- [x] Basic CLI works (`run`, `done`, `status`, `progress`)
 
-### V1 (Phase 1+2)
+### V1 (Phase 1+2) - In Progress
 - [ ] Notifications working (desktop + ntfy)
-- [ ] Configuration system (TOML)
+- [x] Configuration system (YAML) (v0.1.0)
 - [ ] Interactive mode
-- [ ] Rich terminal output
-- [ ] Configurable retry/timeout
+- [x] Rich terminal output (banner, phase table) (v0.1.1)
+- [x] Configurable retry/timeout (v0.1.0)
+- [x] Configurable model selection (v0.1.1)
+- [x] Configurable output mode (terminal/file/both) (v0.1.1)
 
 ### V2 (Phase 1+2+3)
-- [ ] Template system with `orchestrate init`
+- [ ] Template system with `debussy init`
 - [ ] Full documentation
 - [ ] Notes template standardized
 - [ ] Tested on Grain_API assessment-service-refactor
@@ -855,10 +893,11 @@ CREATE TABLE completion_signals (
 
 ## Next Steps
 
-1. **Implement Phase 1** - Foundation (this session or next)
+1. ~~**Implement Phase 1** - Foundation~~ ✅ Complete (v0.1.0)
 2. **Test on Grain_API** - Use assessment-service-refactor as guinea pig
-3. **Iterate** - Add notifications and polish based on real usage
-4. **Templates** - Extract and standardize after validation
+3. **Add Notifications** - Desktop toast and ntfy integration
+4. **Interactive Mode** - Manual approval between phases
+5. **Templates** - `debussy init` command to scaffold from templates
 
 ---
 

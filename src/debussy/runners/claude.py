@@ -7,8 +7,11 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Literal, TextIO
 
-from orchestrator.core.models import ComplianceIssue, ExecutionResult, Phase
+from debussy.core.models import ComplianceIssue, ExecutionResult, Phase
+
+OutputMode = Literal["terminal", "file", "both"]
 
 
 class ClaudeRunner:
@@ -21,12 +24,46 @@ class ClaudeRunner:
         claude_command: str = "claude",
         stream_output: bool = True,
         model: str = "sonnet",
+        output_mode: OutputMode = "terminal",
+        log_dir: Path | None = None,
     ) -> None:
         self.project_root = project_root
         self.timeout = timeout
         self.claude_command = claude_command
         self.stream_output = stream_output
         self.model = model
+        self.output_mode = output_mode
+        self.log_dir = log_dir or (project_root / ".debussy" / "logs")
+        self._current_log_file: TextIO | None = None
+
+    def _write_output(self, text: str, newline: bool = False) -> None:
+        """Write output to terminal and/or file based on output_mode."""
+        output = text + ("\n" if newline else "")
+
+        if self.output_mode in ("terminal", "both"):
+            sys.stdout.write(output)
+            sys.stdout.flush()
+
+        if self.output_mode in ("file", "both") and self._current_log_file:
+            self._current_log_file.write(output)
+            self._current_log_file.flush()
+
+    def _open_log_file(self, run_id: str, phase_id: str) -> None:
+        """Open a log file for the current phase."""
+        if self.output_mode in ("file", "both"):
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = self.log_dir / f"run_{run_id}_phase_{phase_id}.log"
+            self._current_log_file = log_path.open("w", encoding="utf-8")
+            self._current_log_file.write(f"=== Phase {phase_id} Log ===\n")
+            self._current_log_file.write(f"Run ID: {run_id}\n")
+            self._current_log_file.write(f"Model: {self.model}\n")
+            self._current_log_file.write("=" * 40 + "\n\n")
+
+    def _close_log_file(self) -> None:
+        """Close the current log file."""
+        if self._current_log_file:
+            self._current_log_file.close()
+            self._current_log_file = None
 
     async def _stream_json_reader(
         self,
@@ -56,8 +93,7 @@ class ClaudeRunner:
             except json.JSONDecodeError:
                 # Not JSON, just print as-is
                 if self.stream_output:
-                    sys.stdout.write(decoded + "\n")
-                    sys.stdout.flush()
+                    self._write_output(decoded, newline=True)
                 full_text.append(decoded)
 
         return "\n".join(full_text)
@@ -74,8 +110,7 @@ class ClaudeRunner:
                 if content.get("type") == "text":
                     text = content.get("text", "")
                     if text and self.stream_output:
-                        sys.stdout.write(text)
-                        sys.stdout.flush()
+                        self._write_output(text)
                     full_text.append(text)
                 elif content.get("type") == "tool_use":
                     self._display_tool_use(content)
@@ -86,8 +121,7 @@ class ClaudeRunner:
             if delta.get("type") == "text_delta":
                 text = delta.get("text", "")
                 if text and self.stream_output:
-                    sys.stdout.write(text)
-                    sys.stdout.flush()
+                    self._write_output(text)
                 full_text.append(text)
 
         # Handle tool results from user messages
@@ -112,33 +146,31 @@ class ClaudeRunner:
             # Show just filename, not full path
             filename = file_path.split("/")[-1].split("\\")[-1] if file_path else "?"
             if tool_name == "Edit":
-                sys.stdout.write(f"\n[Edit: {filename}]\n")
+                self._write_output(f"\n[Edit: {filename}]\n")
             elif tool_name == "Write":
-                sys.stdout.write(f"\n[Write: {filename}]\n")
+                self._write_output(f"\n[Write: {filename}]\n")
             else:
-                sys.stdout.write(f"\n[Read: {filename}]\n")
+                self._write_output(f"\n[Read: {filename}]\n")
         elif tool_name == "Bash":
             command = tool_input.get("command", "")
             # Truncate long commands
             if len(command) > 60:
                 command = command[:57] + "..."
-            sys.stdout.write(f"\n[Bash: {command}]\n")
+            self._write_output(f"\n[Bash: {command}]\n")
         elif tool_name == "Glob":
             pattern = tool_input.get("pattern", "")
-            sys.stdout.write(f"\n[Glob: {pattern}]\n")
+            self._write_output(f"\n[Glob: {pattern}]\n")
         elif tool_name == "Grep":
             pattern = tool_input.get("pattern", "")
-            sys.stdout.write(f"\n[Grep: {pattern}]\n")
+            self._write_output(f"\n[Grep: {pattern}]\n")
         elif tool_name == "TodoWrite":
             todos = tool_input.get("todos", [])
-            sys.stdout.write(f"\n[TodoWrite: {len(todos)} items]\n")
+            self._write_output(f"\n[TodoWrite: {len(todos)} items]\n")
         elif tool_name == "Task":
             desc = tool_input.get("description", "")
-            sys.stdout.write(f"\n[Task: {desc}]\n")
+            self._write_output(f"\n[Task: {desc}]\n")
         else:
-            sys.stdout.write(f"\n[{tool_name}]\n")
-
-        sys.stdout.flush()
+            self._write_output(f"\n[{tool_name}]\n")
 
     def _display_tool_result(self, content: dict, result_text: str) -> None:
         """Display abbreviated tool result."""
@@ -150,8 +182,7 @@ class ClaudeRunner:
             error_msg = result_text or content.get("content", "")
             if len(error_msg) > 100:
                 error_msg = error_msg[:97] + "..."
-            sys.stdout.write(f"  [ERROR: {error_msg}]\n")
-            sys.stdout.flush()
+            self._write_output(f"  [ERROR: {error_msg}]\n")
 
     async def _stream_stderr(
         self,
@@ -166,24 +197,29 @@ class ClaudeRunner:
             decoded = line.decode("utf-8", errors="replace")
             output_list.append(decoded)
             if self.stream_output:
-                sys.stdout.write(f"[ERR] {decoded}")
-                sys.stdout.flush()
+                self._write_output(f"[ERR] {decoded}")
 
     async def execute_phase(
         self,
         phase: Phase,
         custom_prompt: str | None = None,
+        run_id: str | None = None,
     ) -> ExecutionResult:
         """Execute a phase using Claude CLI.
 
         Args:
             phase: The phase to execute
             custom_prompt: Optional custom prompt (for remediation sessions)
+            run_id: Optional run ID for log file naming
 
         Returns:
             ExecutionResult with success status and session log
         """
         prompt = custom_prompt or self._build_phase_prompt(phase)
+
+        # Open log file if using file output
+        if run_id:
+            self._open_log_file(run_id, phase.id)
 
         start_time = time.time()
         try:
@@ -236,9 +272,9 @@ class ClaudeRunner:
                 session_log += f"\n\nSTDERR:\n{''.join(stderr_lines)}"
 
             if self.stream_output:
-                sys.stdout.write("\n")  # Newline after streaming output
-                sys.stdout.flush()
+                self._write_output("\n")  # Newline after streaming output
 
+            self._close_log_file()
             return ExecutionResult(
                 success=process.returncode == 0,
                 session_log=session_log,
@@ -248,6 +284,7 @@ class ClaudeRunner:
             )
 
         except FileNotFoundError:
+            self._close_log_file()
             return ExecutionResult(
                 success=False,
                 session_log=f"Claude CLI not found: {self.claude_command}",
@@ -256,6 +293,7 @@ class ClaudeRunner:
                 pid=None,
             )
         except Exception as e:
+            self._close_log_file()
             return ExecutionResult(
                 success=False,
                 session_log=f"Error spawning Claude: {e}",
@@ -298,17 +336,17 @@ Read the phase plan file and follow the Process Wrapper EXACTLY.
 
 When the phase is complete (all tasks done, all gates passing):
 1. Write notes to the specified output path
-2. Run: `orchestrate done --phase {phase.id} --report '{{...}}'`
+2. Run: `debussy done --phase {phase.id} --report '{{...}}'`
 
 If you encounter a blocker that prevents completion:
-- Run: `orchestrate done --phase {phase.id} --status blocked --reason "description"`
+- Run: `debussy done --phase {phase.id} --status blocked --reason "description"`
 
 ## Important
 
 - Follow the template Process Wrapper exactly
 - Use the Task tool to invoke required agents (don't do their work yourself)
 - Run all pre-validation commands until they pass
-- The orchestrator will verify your work - be thorough
+- The debussy will verify your work - be thorough
 """
 
     def build_remediation_prompt(
@@ -352,7 +390,7 @@ The previous attempt FAILED compliance checks.
 Read and follow: `{phase.path}`
 
 ## When Complete
-Run: `orchestrate done --phase {phase.id} --report '{{...}}'`
+Run: `debussy done --phase {phase.id} --report '{{...}}'`
 
 IMPORTANT: This is a remediation session. Follow the template EXACTLY.
 All required agents MUST be invoked via the Task tool - do not do their work yourself.

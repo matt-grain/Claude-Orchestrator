@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.core.models import PhaseStatus
-from orchestrator.parsers.master import parse_master_plan
-from orchestrator.parsers.phase import parse_phase
+from debussy.core.models import PhaseStatus
+from debussy.parsers.master import parse_master_plan
+from debussy.parsers.phase import parse_phase
 
 
 class TestMasterPlanParser:

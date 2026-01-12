@@ -6,24 +6,24 @@ import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from orchestrator.config import Config, get_orchestrator_dir
-from orchestrator.core.compliance import ComplianceChecker
-from orchestrator.core.models import (
+from debussy.config import Config, get_orchestrator_dir
+from debussy.core.compliance import ComplianceChecker
+from debussy.core.models import (
     MasterPlan,
     Phase,
     PhaseStatus,
     RemediationStrategy,
     RunStatus,
 )
-from orchestrator.core.state import StateManager
-from orchestrator.notifications.base import ConsoleNotifier, Notifier, NullNotifier
-from orchestrator.parsers.master import parse_master_plan
-from orchestrator.parsers.phase import parse_phase
-from orchestrator.runners.claude import ClaudeRunner
-from orchestrator.runners.gates import GateRunner
+from debussy.core.state import StateManager
+from debussy.notifications.base import ConsoleNotifier, Notifier, NullNotifier
+from debussy.parsers.master import parse_master_plan
+from debussy.parsers.phase import parse_phase
+from debussy.runners.claude import ClaudeRunner
+from debussy.runners.gates import GateRunner
 
 if TYPE_CHECKING:
-    from orchestrator.core.models import ComplianceIssue
+    from debussy.core.models import ComplianceIssue
 
 
 class Orchestrator:
@@ -45,7 +45,12 @@ class Orchestrator:
         # Initialize components
         orchestrator_dir = get_orchestrator_dir(self.project_root)
         self.state = StateManager(orchestrator_dir / "state.db")
-        self.claude = ClaudeRunner(self.project_root, self.config.timeout, model=self.config.model)
+        self.claude = ClaudeRunner(
+            self.project_root,
+            self.config.timeout,
+            model=self.config.model,
+            output_mode=self.config.output,
+        )
         self.gates = GateRunner(self.project_root)
         self.checker = ComplianceChecker(self.gates, self.project_root)
 
@@ -174,7 +179,7 @@ class Orchestrator:
                 prompt = None  # Use default prompt
 
             # Spawn Claude worker
-            result = await self.claude.execute_phase(phase, prompt)
+            result = await self.claude.execute_phase(phase, prompt, run_id=run_id)
 
             if not result.success:
                 self.state.update_phase_status(

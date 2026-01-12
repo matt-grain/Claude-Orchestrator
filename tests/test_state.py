@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.core.models import (
+from debussy.core.models import (
     CompletionSignal,
     GateResult,
     MasterPlan,
@@ -15,7 +15,7 @@ from orchestrator.core.models import (
     PhaseStatus,
     RunStatus,
 )
-from orchestrator.core.state import StateManager
+from debussy.core.state import StateManager
 
 
 def make_gate_result(name: str, passed: bool, output: str = "OK") -> GateResult:

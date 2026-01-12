@@ -1,5 +1,5 @@
 """Notification providers."""
 
-from orchestrator.notifications.base import Notifier
+from debussy.notifications.base import Notifier
 
 __all__ = ["Notifier"]

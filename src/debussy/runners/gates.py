@@ -6,7 +6,7 @@ import asyncio
 from datetime import datetime
 from pathlib import Path
 
-from orchestrator.core.models import Gate, GateResult, Phase
+from debussy.core.models import Gate, GateResult, Phase
 
 
 class GateRunner:

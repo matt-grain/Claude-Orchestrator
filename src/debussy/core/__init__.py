@@ -1,6 +1,6 @@
 """Core orchestration logic."""
 
-from orchestrator.core.models import (
+from debussy.core.models import (
     ComplianceIssue,
     ComplianceResult,
     Gate,

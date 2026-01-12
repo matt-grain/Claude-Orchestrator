@@ -1,4 +1,4 @@
-# Pre-commit hooks for Claude Orchestrator
+# Pre-commit hooks for Claude Debussy
 # Run: pre-commit install
 # Manual: pre-commit run --all-files
 

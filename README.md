@@ -1,10 +1,10 @@
-# Claude Orchestrator
+# Claude Debussy
 
-A Python orchestrator for multi-phase Claude CLI sessions with compliance verification, state persistence, and real-time streaming output.
+A Python (Claude) Debussy for multi-phase Claude CLI sessions with compliance verification, state persistence, and real-time streaming output.
 
 ## Overview
 
-Claude Orchestrator coordinates complex, multi-phase projects by:
+Claude Debussy coordinates complex, multi-phase projects by:
 - Spawning ephemeral Claude CLI sessions for each phase
 - Tracking state and dependencies between phases
 - Verifying compliance (gates, required agents, notes)
@@ -15,14 +15,14 @@ Claude Orchestrator coordinates complex, multi-phase projects by:
 
 ```bash
 # Clone the repository
-git clone https://github.com/matt-grain/Claude-Orchestrator.git
-cd Claude-Orchestrator
+git clone https://github.com/matt-grain/Claude-Debussy.git
+cd Claude-Debussy
 
 # Install with uv
 uv pip install -e .
 
 # Or add to your project
-uv add --dev "claude-orchestrator @ file:///path/to/Claude-Orchestrator"
+uv add --dev "claude-debussy @ file:///path/to/Claude-Debussy"
 ```
 
 ## Quick Start
@@ -82,84 +82,94 @@ Create `docs/phase1-setup.md`:
 - [ ] 1.2: Create `tests/test_module.py` placeholder
 ```
 
-### 3. Run the Orchestrator
+### 3. Run the Debussy
 
 ```bash
 # Dry run - validate plan without executing
-orchestrate run docs/master-plan.md --dry-run
+debussy run docs/master-plan.md --dry-run
 
 # Full run with default model (sonnet)
-orchestrate run docs/master-plan.md
+debussy run docs/master-plan.md
 
 # Use haiku for faster/cheaper execution
-orchestrate run docs/master-plan.md --model haiku
+debussy run docs/master-plan.md --model haiku
 
 # Use opus for complex tasks
-orchestrate run docs/master-plan.md --model opus
+debussy run docs/master-plan.md --model opus
+
+# Output to log files instead of terminal
+debussy run docs/master-plan.md --output file
+
+# Output to both terminal and log files
+debussy run docs/master-plan.md --output both
 ```
 
 ## CLI Commands
 
-### `orchestrate run`
+### `debussy run`
 
 Start orchestrating a master plan.
 
 ```bash
-orchestrate run <master-plan.md> [options]
+debussy run <master-plan.md> [options]
 
 Options:
   --dry-run, -n     Parse and validate only, don't execute
   --phase, -p       Start from specific phase ID
   --model, -m       Claude model: haiku, sonnet, opus (default: sonnet)
+  --output, -o      Output mode: terminal, file, both (default: terminal)
 ```
 
-### `orchestrate status`
+### `debussy status`
 
 Show current orchestration status.
 
 ```bash
-orchestrate status [--run RUN_ID]
+debussy status [--run RUN_ID]
 ```
 
-### `orchestrate history`
+### `debussy history`
 
 List past orchestration runs.
 
 ```bash
-orchestrate history [--limit N]
+debussy history [--limit N]
 ```
 
-### `orchestrate done`
+### `debussy done`
 
 Signal phase completion (called by Claude worker).
 
 ```bash
-orchestrate done --phase 1 --status completed
-orchestrate done --phase 1 --status blocked --reason "Missing dependency"
+debussy done --phase 1 --status completed
+debussy done --phase 1 --status blocked --reason "Missing dependency"
 ```
 
-### `orchestrate resume`
+### `debussy resume`
 
 Resume a paused orchestration run.
 
 ```bash
-orchestrate resume
+debussy resume
 ```
 
 ## Configuration
 
-Create `.orchestrator/config.yaml`:
+Create `.debussy/config.yaml`:
 
 ```yaml
 timeout: 1800          # Phase timeout in seconds (default: 30 min)
 max_retries: 2         # Max retry attempts per phase
 model: sonnet          # Default model: haiku, sonnet, opus
+output: terminal       # Output mode: terminal, file, both
 strict_compliance: true
 
 notifications:
   enabled: true
   provider: desktop    # desktop, ntfy, none
 ```
+
+When using `file` or `both` output modes, logs are saved to `.debussy/logs/run_{id}_phase_{n}.log`.
 
 ## Phase File Format
 
@@ -198,7 +208,7 @@ notifications:
 
 ## Streaming Output
 
-The orchestrator displays real-time output from Claude sessions:
+The debussy displays real-time output from Claude sessions:
 
 ```
 [Read: phase1-setup.md]
@@ -211,21 +221,21 @@ The orchestrator displays real-time output from Claude sessions:
 
 ## State Persistence
 
-State is stored in `.orchestrator/state.db` (SQLite) relative to your project root.
+State is stored in `.debussy/state.db` (SQLite) relative to your project root.
 
 ```bash
 # Check current state
-orchestrate status
+debussy status
 
 # View history
-orchestrate history
+debussy history
 ```
 
 ## Architecture
 
 ```
 +-------------------------------------------------------------+
-|                    Python Orchestrator                       |
+|                    Python Debussy                       |
 |  - Parses master plan and phase files                       |
 |  - Manages state in SQLite                                  |
 |  - Coordinates phase execution                              |
@@ -238,7 +248,7 @@ orchestrate history
 |  - Fresh session per phase (no token limits)                |
 |  - --dangerously-skip-permissions for automation            |
 |  - --output-format stream-json for real-time output         |
-|  - Calls `orchestrate done` when complete                   |
+|  - Calls `debussy done` when complete                   |
 +-------------------------------------------------------------+
                               |
                               v
@@ -263,6 +273,7 @@ uv run pytest
 # Run linting
 uv run ruff check src/
 uv run pyright src/
+uv run ty check src/
 
 # Run all pre-commit hooks
 pre-commit run --all-files

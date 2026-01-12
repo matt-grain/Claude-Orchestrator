@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from orchestrator.core.models import MasterPlan, Phase, PhaseStatus
+from debussy.core.models import MasterPlan, Phase, PhaseStatus
 
 
 def parse_master_plan(master_path: Path) -> MasterPlan:

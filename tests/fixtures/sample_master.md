@@ -7,7 +7,7 @@
 
 ## Overview
 
-Test feature for orchestrator validation.
+Test feature for debussy validation.
 
 ## Phases
 

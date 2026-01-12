@@ -1,4 +1,4 @@
-"""Integration tests for the orchestrator system."""
+"""Integration tests for the debussy system."""
 
 from __future__ import annotations
 
@@ -7,15 +7,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from orchestrator.core.models import (
+from debussy.core.models import (
     GateResult,
     PhaseStatus,
     RunStatus,
 )
-from orchestrator.core.orchestrator import Orchestrator
-from orchestrator.core.state import StateManager
-from orchestrator.parsers.master import parse_master_plan
-from orchestrator.parsers.phase import parse_phase
+from debussy.core.orchestrator import Orchestrator
+from debussy.core.state import StateManager
+from debussy.parsers.master import parse_master_plan
+from debussy.parsers.phase import parse_phase
 
 
 def make_gate_result(name: str, passed: bool, output: str = "OK") -> GateResult:
@@ -57,20 +57,20 @@ class TestParserIntegration:
 
 
 class TestStateOrchestratorIntegration:
-    """Integration tests for state manager with orchestrator."""
+    """Integration tests for state manager with debussy."""
 
     def test_orchestrator_creates_run_state(self, temp_master_plan: Path, temp_dir: Path) -> None:
-        """Test that orchestrator correctly initializes state."""
-        orchestrator = Orchestrator(temp_master_plan)
-        orchestrator.load_plan()
+        """Test that debussy correctly initializes state."""
+        debussy = Orchestrator(temp_master_plan)
+        debussy.load_plan()
 
         # Create mock state manager pointing to temp db
         db_path = temp_dir / "state.db"
         state = StateManager(db_path)
 
         # Create a run
-        assert orchestrator.plan is not None
-        run_id = state.create_run(orchestrator.plan)
+        assert debussy.plan is not None
+        run_id = state.create_run(debussy.plan)
 
         # Verify state
         run_state = state.get_run(run_id)
@@ -79,14 +79,14 @@ class TestStateOrchestratorIntegration:
 
     def test_state_tracks_phase_execution(self, temp_master_plan: Path, temp_dir: Path) -> None:
         """Test that state correctly tracks phase execution."""
-        orchestrator = Orchestrator(temp_master_plan)
-        orchestrator.load_plan()
+        debussy = Orchestrator(temp_master_plan)
+        debussy.load_plan()
 
         db_path = temp_dir / "state.db"
         state = StateManager(db_path)
 
-        assert orchestrator.plan is not None
-        run_id = state.create_run(orchestrator.plan)
+        assert debussy.plan is not None
+        run_id = state.create_run(debussy.plan)
 
         # Simulate phase execution
         state.set_current_phase(run_id, "1")
@@ -103,7 +103,7 @@ class TestStateOrchestratorIntegration:
 
 
 class TestOrchestratorFlow:
-    """Integration tests for orchestrator execution flow."""
+    """Integration tests for debussy execution flow."""
 
     @pytest.mark.asyncio
     async def test_successful_orchestration(
@@ -112,8 +112,8 @@ class TestOrchestratorFlow:
         temp_dir: Path,  # noqa: ARG002
     ) -> None:
         """Test successful orchestration of a simple plan."""
-        orchestrator = Orchestrator(temp_master_plan)
-        orchestrator.load_plan()
+        debussy = Orchestrator(temp_master_plan)
+        debussy.load_plan()
 
         # Mock the Claude runner to succeed
         mock_claude = MagicMock()
@@ -124,30 +124,30 @@ class TestOrchestratorFlow:
                 session_log="Task completed successfully",
             )
         )
-        orchestrator.claude = mock_claude
+        debussy.claude = mock_claude
 
         # Mock gates to pass
         mock_gates = MagicMock()
         mock_gates.run_gate = AsyncMock(return_value=make_gate_result("test", True, "OK"))
-        orchestrator.gates = mock_gates
+        debussy.gates = mock_gates
 
         # Mock state manager
-        with patch.object(orchestrator, "state") as mock_state:
+        with patch.object(debussy, "state") as mock_state:
             mock_state.create_run.return_value = "test-run-id"
             mock_state.get_completion_signal.return_value = None
             mock_state.get_attempt_count.return_value = 1
 
             # Run orchestration
-            run_id = await orchestrator.run()
+            run_id = await debussy.run()
 
             assert run_id == "test-run-id"
             mock_state.create_run.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_phase_failure_handling(self, temp_master_plan: Path) -> None:
-        """Test that orchestrator handles phase failures correctly."""
-        orchestrator = Orchestrator(temp_master_plan)
-        orchestrator.load_plan()
+        """Test that debussy handles phase failures correctly."""
+        debussy = Orchestrator(temp_master_plan)
+        debussy.load_plan()
 
         # Mock Claude runner to fail
         mock_claude = MagicMock()
@@ -158,13 +158,13 @@ class TestOrchestratorFlow:
                 session_log="Error occurred",
             )
         )
-        orchestrator.claude = mock_claude
+        debussy.claude = mock_claude
 
-        with patch.object(orchestrator, "state") as mock_state:
+        with patch.object(debussy, "state") as mock_state:
             mock_state.create_run.return_value = "test-run-id"
             mock_state.get_completion_signal.return_value = None
 
-            await orchestrator.run()
+            await debussy.run()
 
             # Should update status to failed
             mock_state.update_run_status.assert_called_with("test-run-id", RunStatus.FAILED)
@@ -175,38 +175,38 @@ class TestDependencyResolution:
 
     def test_dependencies_met_no_deps(self, temp_master_plan: Path) -> None:
         """Test dependency check when phase has no dependencies."""
-        orchestrator = Orchestrator(temp_master_plan)
-        orchestrator.load_plan()
+        debussy = Orchestrator(temp_master_plan)
+        debussy.load_plan()
 
-        assert orchestrator.plan is not None
-        phase1 = orchestrator.plan.phases[0]
+        assert debussy.plan is not None
+        phase1 = debussy.plan.phases[0]
 
         # Phase 1 has no dependencies
-        assert orchestrator._dependencies_met(phase1)
+        assert debussy._dependencies_met(phase1)
 
     def test_dependencies_not_met(self, temp_master_plan: Path) -> None:
         """Test dependency check when dependencies are not met."""
-        orchestrator = Orchestrator(temp_master_plan)
-        orchestrator.load_plan()
+        debussy = Orchestrator(temp_master_plan)
+        debussy.load_plan()
 
-        assert orchestrator.plan is not None
-        phase2 = orchestrator.plan.phases[1]
+        assert debussy.plan is not None
+        phase2 = debussy.plan.phases[1]
 
         # Phase 2 depends on phase 1, which hasn't completed
-        assert not orchestrator._dependencies_met(phase2)
+        assert not debussy._dependencies_met(phase2)
 
     def test_dependencies_met_after_completion(self, temp_master_plan: Path) -> None:
         """Test dependency check after completing required phase."""
-        orchestrator = Orchestrator(temp_master_plan)
-        orchestrator.load_plan()
+        debussy = Orchestrator(temp_master_plan)
+        debussy.load_plan()
 
-        assert orchestrator.plan is not None
+        assert debussy.plan is not None
 
         # Mark phase 1 as completed
-        orchestrator.plan.phases[0].status = PhaseStatus.COMPLETED
+        debussy.plan.phases[0].status = PhaseStatus.COMPLETED
 
-        phase2 = orchestrator.plan.phases[1]
-        assert orchestrator._dependencies_met(phase2)
+        phase2 = debussy.plan.phases[1]
+        assert debussy._dependencies_met(phase2)
 
 
 class TestGateRunnerIntegration:
@@ -215,8 +215,8 @@ class TestGateRunnerIntegration:
     @pytest.mark.asyncio
     async def test_gate_command_execution(self, temp_dir: Path) -> None:
         """Test running a simple gate command."""
-        from orchestrator.core.models import Gate
-        from orchestrator.runners.gates import GateRunner
+        from debussy.core.models import Gate
+        from debussy.runners.gates import GateRunner
 
         runner = GateRunner(temp_dir)
 
@@ -230,8 +230,8 @@ class TestGateRunnerIntegration:
     @pytest.mark.asyncio
     async def test_failing_gate(self, temp_dir: Path) -> None:
         """Test running a gate that fails."""
-        from orchestrator.core.models import Gate
-        from orchestrator.runners.gates import GateRunner
+        from debussy.core.models import Gate
+        from debussy.runners.gates import GateRunner
 
         runner = GateRunner(temp_dir)
 
@@ -267,7 +267,7 @@ class TestCompleteWorkflow:
         # Create run with first manager
         state1 = StateManager(db_path)
         plan = parse_master_plan(temp_master_plan)
-        from orchestrator.core.models import MasterPlan, Phase
+        from debussy.core.models import MasterPlan, Phase
 
         master = MasterPlan(
             name=plan.name,

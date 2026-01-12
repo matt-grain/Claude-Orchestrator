@@ -18,3 +18,4 @@ wheels/
 # Temp files
 tmpclaude-*
 .orchestrator/
+.debussy/

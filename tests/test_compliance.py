@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from orchestrator.core.compliance import ComplianceChecker
-from orchestrator.core.models import (
+from debussy.core.compliance import ComplianceChecker
+from debussy.core.models import (
     ComplianceIssueType,
     Gate,
     GateResult,
@@ -16,7 +16,7 @@ from orchestrator.core.models import (
     PhaseStatus,
     RemediationStrategy,
 )
-from orchestrator.runners.gates import GateRunner
+from debussy.runners.gates import GateRunner
 
 
 def make_gate_result(name: str, passed: bool, output: str = "OK") -> GateResult:

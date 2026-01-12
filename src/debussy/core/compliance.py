@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from orchestrator.core.models import (
+from debussy.core.models import (
     ComplianceIssue,
     ComplianceIssueType,
     ComplianceResult,
@@ -16,7 +16,7 @@ from orchestrator.core.models import (
 )
 
 if TYPE_CHECKING:
-    from orchestrator.runners.gates import GateRunner
+    from debussy.runners.gates import GateRunner
 
 
 # Required sections in notes files
@@ -45,7 +45,7 @@ class ComplianceChecker:
         Args:
             phase: The phase that was executed
             session_log: The full session log from Claude
-            completion_report: The report submitted via `orchestrate done`
+            completion_report: The report submitted via `debussy done`
 
         Returns:
             ComplianceResult with pass/fail status and any issues found

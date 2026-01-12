@@ -1,1 +1,1 @@
-"""Tests for Claude Orchestrator."""
+"""Tests for Claude Debussy."""
