@@ -579,9 +579,10 @@ topic = "my-debussy"
 - [x] Fallback to logging when notifications unavailable
 
 #### 2.3 ntfy Integration (src/debussy/notifications/ntfy.py)
-- [ ] POST to ntfy server on events
-- [ ] Configurable server + topic
-- [ ] Priority levels for different events
+- [x] POST to ntfy server on events via httpx
+- [x] Configurable server + topic
+- [x] Priority levels mapped from notification levels (info=3, warning=4, error/alert=5)
+- [x] Emoji tags for visual differentiation
 
 #### 2.4 Rich Terminal Output
 - [x] ASCII art banner at startup (v0.1.1)

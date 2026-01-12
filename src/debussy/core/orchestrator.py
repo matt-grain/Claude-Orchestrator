@@ -18,6 +18,7 @@ from debussy.core.models import (
 from debussy.core.state import StateManager
 from debussy.notifications.base import ConsoleNotifier, Notifier, NullNotifier
 from debussy.notifications.desktop import CompositeNotifier, DesktopNotifier
+from debussy.notifications.ntfy import NtfyNotifier
 from debussy.parsers.master import parse_master_plan
 from debussy.parsers.phase import parse_phase
 from debussy.runners.claude import ClaudeRunner
@@ -70,6 +71,7 @@ class Orchestrator:
             return NullNotifier()
 
         provider = self.config.notifications.provider
+        ntfy_config = self.config.notifications
 
         if provider == "none":
             return NullNotifier()
@@ -81,8 +83,19 @@ class Orchestrator:
                     ConsoleNotifier(),
                 ]
             )
+        elif provider == "ntfy":
+            # Use ntfy + console notifications
+            return CompositeNotifier(
+                [
+                    NtfyNotifier(
+                        server=ntfy_config.ntfy_server,
+                        topic=ntfy_config.ntfy_topic,
+                    ),
+                    ConsoleNotifier(),
+                ]
+            )
         else:
-            # Default to console only (ntfy will be added later)
+            # Default to console only
             return ConsoleNotifier()
 
     def load_plan(self) -> MasterPlan:
