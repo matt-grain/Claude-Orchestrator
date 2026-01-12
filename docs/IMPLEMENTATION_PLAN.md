@@ -574,9 +574,9 @@ topic = "my-debussy"
 ```
 
 #### 2.2 Desktop Notifications (src/debussy/notifications/desktop.py)
-- [ ] Windows toast notifications (win10toast or plyer)
-- [ ] macOS notifications (osascript or plyer)
-- [ ] Linux notifications (notify-send or plyer)
+- [x] Cross-platform notifications via plyer (Windows, macOS, Linux)
+- [x] CompositeNotifier for multiple providers (desktop + console)
+- [x] Fallback to logging when notifications unavailable
 
 #### 2.3 ntfy Integration (src/debussy/notifications/ntfy.py)
 - [ ] POST to ntfy server on events

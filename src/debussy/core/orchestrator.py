@@ -17,6 +17,7 @@ from debussy.core.models import (
 )
 from debussy.core.state import StateManager
 from debussy.notifications.base import ConsoleNotifier, Notifier, NullNotifier
+from debussy.notifications.desktop import CompositeNotifier, DesktopNotifier
 from debussy.parsers.master import parse_master_plan
 from debussy.parsers.phase import parse_phase
 from debussy.runners.claude import ClaudeRunner
@@ -54,16 +55,35 @@ class Orchestrator:
         self.gates = GateRunner(self.project_root)
         self.checker = ComplianceChecker(self.gates, self.project_root)
 
-        # Use console notifier by default
+        # Initialize notifier based on config
         if notifier is None:
-            self.notifier: Notifier = (
-                ConsoleNotifier() if self.config.notifications.enabled else NullNotifier()
-            )
+            self.notifier = self._create_notifier()
         else:
             self.notifier = notifier
 
         # Parse master plan
         self.plan: MasterPlan | None = None
+
+    def _create_notifier(self) -> Notifier:
+        """Create notifier based on configuration."""
+        if not self.config.notifications.enabled:
+            return NullNotifier()
+
+        provider = self.config.notifications.provider
+
+        if provider == "none":
+            return NullNotifier()
+        elif provider == "desktop":
+            # Use both desktop and console notifications
+            return CompositeNotifier(
+                [
+                    DesktopNotifier(app_name="Debussy"),
+                    ConsoleNotifier(),
+                ]
+            )
+        else:
+            # Default to console only (ntfy will be added later)
+            return ConsoleNotifier()
 
     def load_plan(self) -> MasterPlan:
         """Load and parse the master plan."""

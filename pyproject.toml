@@ -14,6 +14,7 @@ requires-python = ">=3.13"
 dependencies = [
     "aiosqlite>=0.22.1",
     "httpx>=0.28.1",
+    "plyer>=2.1.0",
     "pydantic>=2.12.5",
     "pyyaml>=6.0.3",
     "rich>=14.2.0",
@@ -69,6 +70,7 @@ select = [
 ignore = [
     "PLR0913",  # Too many arguments (we have config objects)
     "PLR2004",  # Magic value comparison (fine in tests)
+    "TC002",    # pytest is used at runtime in test files
     "TC003",    # Path used at runtime in Pydantic models
     "PLC0415",  # Intentional lazy imports to avoid circular deps
 ]
