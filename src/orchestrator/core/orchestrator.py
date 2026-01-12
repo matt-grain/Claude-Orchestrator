@@ -34,17 +34,20 @@ class Orchestrator:
         master_plan_path: Path,
         config: Config | None = None,
         notifier: Notifier | None = None,
+        project_root: Path | None = None,
     ) -> None:
         self.master_plan_path = master_plan_path.resolve()
-        self.project_root = master_plan_path.parent
+        # Use explicit project_root or default to cwd (not plan's parent)
+        # This ensures CLI commands find the same state.db
+        self.project_root = (project_root or Path.cwd()).resolve()
         self.config = config or Config.load()
 
         # Initialize components
         orchestrator_dir = get_orchestrator_dir(self.project_root)
         self.state = StateManager(orchestrator_dir / "state.db")
-        self.claude = ClaudeRunner(self.project_root, self.config.timeout)
+        self.claude = ClaudeRunner(self.project_root, self.config.timeout, model=self.config.model)
         self.gates = GateRunner(self.project_root)
-        self.checker = ComplianceChecker(self.gates)
+        self.checker = ComplianceChecker(self.gates, self.project_root)
 
         # Use console notifier by default
         if notifier is None:
@@ -205,6 +208,9 @@ class Orchestrator:
 
             if compliance.passed:
                 self.state.update_phase_status(run_id, phase.id, PhaseStatus.COMPLETED)
+                phase.status = (
+                    PhaseStatus.COMPLETED
+                )  # Update in-memory status for dependency checks
                 self.notifier.success(
                     f"Phase {phase.id} Completed",
                     "All compliance checks passed",
@@ -222,6 +228,7 @@ class Orchestrator:
                         issues_summary,
                     )
                     self.state.update_phase_status(run_id, phase.id, PhaseStatus.COMPLETED)
+                    phase.status = PhaseStatus.COMPLETED  # Update in-memory status
                     return True
 
                 case RemediationStrategy.TARGETED_FIX | RemediationStrategy.FULL_RETRY:
@@ -285,6 +292,7 @@ def run_orchestration(
     master_plan_path: Path,
     start_phase: str | None = None,
     config: Config | None = None,
+    project_root: Path | None = None,
 ) -> str:
     """Convenience function to run orchestration synchronously.
 
@@ -292,10 +300,11 @@ def run_orchestration(
         master_plan_path: Path to the master plan file
         start_phase: Optional phase ID to start from
         config: Optional configuration
+        project_root: Optional project root (defaults to cwd)
 
     Returns:
         The run ID
     """
-    orchestrator = Orchestrator(master_plan_path, config)
+    orchestrator = Orchestrator(master_plan_path, config, project_root=project_root)
     orchestrator.load_plan()
     return asyncio.run(orchestrator.run(start_phase))

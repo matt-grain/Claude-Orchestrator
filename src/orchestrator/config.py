@@ -23,6 +23,7 @@ class Config(BaseModel):
 
     timeout: int = Field(default=1800, description="Phase timeout in seconds (default: 30 min)")
     max_retries: int = Field(default=2, description="Max retry attempts per phase")
+    model: str = Field(default="sonnet", description="Claude model to use (haiku, sonnet, opus)")
     notifications: NotificationConfig = Field(default_factory=NotificationConfig)
     strict_compliance: bool = Field(default=True, description="Fail on any compliance issue")
 

@@ -45,6 +45,10 @@ def run(
         bool,
         typer.Option("--dry-run", "-n", help="Parse and validate only, don't execute"),
     ] = False,
+    model: Annotated[
+        str,
+        typer.Option("--model", "-m", help="Claude model: haiku, sonnet, opus"),
+    ] = "sonnet",
 ) -> None:
     """Start orchestrating a master plan."""
     if dry_run:
@@ -53,11 +57,17 @@ def run(
 
     console.print("[bold blue]Starting orchestration[/bold blue]")
     console.print(f"  Master plan: {master_plan}")
+    console.print(f"  Model: {model}")
     if phase:
         console.print(f"  Starting from phase: {phase}")
 
+    # Create config with model override
+    from orchestrator.config import Config
+
+    config = Config(model=model)
+
     try:
-        run_id = run_orchestration(master_plan, start_phase=phase)
+        run_id = run_orchestration(master_plan, start_phase=phase, config=config)
         console.print(f"\n[green]Orchestration completed. Run ID: {run_id}[/green]")
     except Exception as e:
         console.print(f"\n[red]Orchestration failed: {e}[/red]")

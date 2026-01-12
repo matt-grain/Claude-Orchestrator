@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import sys
 import time
 from pathlib import Path
 
@@ -17,10 +19,155 @@ class ClaudeRunner:
         project_root: Path,
         timeout: int = 1800,
         claude_command: str = "claude",
+        stream_output: bool = True,
+        model: str = "sonnet",
     ) -> None:
         self.project_root = project_root
         self.timeout = timeout
         self.claude_command = claude_command
+        self.stream_output = stream_output
+        self.model = model
+
+    async def _stream_json_reader(
+        self,
+        stream: asyncio.StreamReader,
+        output_list: list[str],
+    ) -> str:
+        """Read JSON stream and display content in real-time.
+
+        Returns the full text content for the session log.
+        """
+        full_text: list[str] = []
+
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+
+            decoded = line.decode("utf-8", errors="replace").strip()
+            output_list.append(decoded + "\n")
+
+            if not decoded:
+                continue
+
+            try:
+                event = json.loads(decoded)
+                self._display_stream_event(event, full_text)
+            except json.JSONDecodeError:
+                # Not JSON, just print as-is
+                if self.stream_output:
+                    sys.stdout.write(decoded + "\n")
+                    sys.stdout.flush()
+                full_text.append(decoded)
+
+        return "\n".join(full_text)
+
+    def _display_stream_event(self, event: dict, full_text: list[str]) -> None:
+        """Display a streaming event and collect text content."""
+        event_type = event.get("type", "")
+
+        # Handle assistant text output
+        if event_type == "assistant":
+            message = event.get("message", {})
+            content_list = message.get("content", [])
+            for content in content_list:
+                if content.get("type") == "text":
+                    text = content.get("text", "")
+                    if text and self.stream_output:
+                        sys.stdout.write(text)
+                        sys.stdout.flush()
+                    full_text.append(text)
+                elif content.get("type") == "tool_use":
+                    self._display_tool_use(content)
+
+        # Handle content block deltas (streaming chunks)
+        elif event_type == "content_block_delta":
+            delta = event.get("delta", {})
+            if delta.get("type") == "text_delta":
+                text = delta.get("text", "")
+                if text and self.stream_output:
+                    sys.stdout.write(text)
+                    sys.stdout.flush()
+                full_text.append(text)
+
+        # Handle tool results from user messages
+        elif event_type == "user":
+            message = event.get("message", {})
+            content_list = message.get("content", [])
+            for content in content_list:
+                if content.get("type") == "tool_result":
+                    self._display_tool_result(content, event.get("tool_use_result", ""))
+
+    def _display_tool_use(self, content: dict) -> None:
+        """Display tool use with relevant details."""
+        if not self.stream_output:
+            return
+
+        tool_name = content.get("name", "unknown")
+        tool_input = content.get("input", {})
+
+        # Format based on tool type
+        if tool_name in ("Read", "Write", "Edit"):
+            file_path = tool_input.get("file_path", "")
+            # Show just filename, not full path
+            filename = file_path.split("/")[-1].split("\\")[-1] if file_path else "?"
+            if tool_name == "Edit":
+                sys.stdout.write(f"\n[Edit: {filename}]\n")
+            elif tool_name == "Write":
+                sys.stdout.write(f"\n[Write: {filename}]\n")
+            else:
+                sys.stdout.write(f"\n[Read: {filename}]\n")
+        elif tool_name == "Bash":
+            command = tool_input.get("command", "")
+            # Truncate long commands
+            if len(command) > 60:
+                command = command[:57] + "..."
+            sys.stdout.write(f"\n[Bash: {command}]\n")
+        elif tool_name == "Glob":
+            pattern = tool_input.get("pattern", "")
+            sys.stdout.write(f"\n[Glob: {pattern}]\n")
+        elif tool_name == "Grep":
+            pattern = tool_input.get("pattern", "")
+            sys.stdout.write(f"\n[Grep: {pattern}]\n")
+        elif tool_name == "TodoWrite":
+            todos = tool_input.get("todos", [])
+            sys.stdout.write(f"\n[TodoWrite: {len(todos)} items]\n")
+        elif tool_name == "Task":
+            desc = tool_input.get("description", "")
+            sys.stdout.write(f"\n[Task: {desc}]\n")
+        else:
+            sys.stdout.write(f"\n[{tool_name}]\n")
+
+        sys.stdout.flush()
+
+    def _display_tool_result(self, content: dict, result_text: str) -> None:
+        """Display abbreviated tool result."""
+        if not self.stream_output:
+            return
+
+        # Check for errors
+        if content.get("is_error"):
+            error_msg = result_text or content.get("content", "")
+            if len(error_msg) > 100:
+                error_msg = error_msg[:97] + "..."
+            sys.stdout.write(f"  [ERROR: {error_msg}]\n")
+            sys.stdout.flush()
+
+    async def _stream_stderr(
+        self,
+        stream: asyncio.StreamReader,
+        output_list: list[str],
+    ) -> None:
+        """Read stderr and display with prefix."""
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+            decoded = line.decode("utf-8", errors="replace")
+            output_list.append(decoded)
+            if self.stream_output:
+                sys.stdout.write(f"[ERR] {decoded}")
+                sys.stdout.flush()
 
     async def execute_phase(
         self,
@@ -42,7 +189,13 @@ class ClaudeRunner:
         try:
             process = await asyncio.create_subprocess_exec(
                 self.claude_command,
-                "--print",  # Non-interactive mode
+                "--print",
+                "--verbose",
+                "--output-format",
+                "stream-json",
+                "--dangerously-skip-permissions",  # Required for automated workflows
+                "--model",
+                self.model,
                 "-p",
                 prompt,
                 stdout=asyncio.subprocess.PIPE,
@@ -50,11 +203,22 @@ class ClaudeRunner:
                 cwd=self.project_root,
             )
 
+            raw_output: list[str] = []
+            stderr_lines: list[str] = []
+
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(),
+                assert process.stdout is not None
+                assert process.stderr is not None
+
+                # Stream stdout (JSON) and stderr concurrently
+                await asyncio.wait_for(
+                    asyncio.gather(
+                        self._stream_json_reader(process.stdout, raw_output),
+                        self._stream_stderr(process.stderr, stderr_lines),
+                    ),
                     timeout=self.timeout,
                 )
+                await process.wait()
             except TimeoutError:
                 process.kill()
                 await process.wait()
@@ -66,9 +230,14 @@ class ClaudeRunner:
                     pid=process.pid,
                 )
 
-            session_log = stdout.decode("utf-8", errors="replace")
-            if stderr:
-                session_log += f"\n\nSTDERR:\n{stderr.decode('utf-8', errors='replace')}"
+            # Use raw JSON output for session log (compliance checker can parse it)
+            session_log = "".join(raw_output)
+            if stderr_lines:
+                session_log += f"\n\nSTDERR:\n{''.join(stderr_lines)}"
+
+            if self.stream_output:
+                sys.stdout.write("\n")  # Newline after streaming output
+                sys.stdout.flush()
 
             return ExecutionResult(
                 success=process.returncode == 0,

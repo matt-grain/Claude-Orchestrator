@@ -32,9 +32,9 @@ def mock_gate_runner() -> MagicMock:
 
 
 @pytest.fixture
-def compliance_checker(mock_gate_runner: MagicMock) -> ComplianceChecker:
+def compliance_checker(mock_gate_runner: MagicMock, tmp_path: Path) -> ComplianceChecker:
     """Create a compliance checker with mocked gate runner."""
-    return ComplianceChecker(mock_gate_runner)
+    return ComplianceChecker(mock_gate_runner, tmp_path)
 
 
 @pytest.fixture

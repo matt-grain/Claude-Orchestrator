@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from orchestrator.core.models import (
@@ -29,8 +30,9 @@ REQUIRED_NOTES_SECTIONS = [
 class ComplianceChecker:
     """Verifies that phase executions comply with template requirements."""
 
-    def __init__(self, gate_runner: GateRunner) -> None:
+    def __init__(self, gate_runner: GateRunner, project_root: Path | None = None) -> None:
         self.gate_runner = gate_runner
+        self.project_root = project_root or Path.cwd()
 
     async def verify_completion(
         self,
@@ -121,8 +123,8 @@ class ComplianceChecker:
 
         notes_path = phase.notes_output
         if not notes_path.is_absolute():
-            # Resolve relative to phase file
-            notes_path = phase.path.parent / notes_path
+            # Resolve relative to project root (where Claude runs)
+            notes_path = self.project_root / notes_path
 
         if not notes_path.exists():
             issues.append(

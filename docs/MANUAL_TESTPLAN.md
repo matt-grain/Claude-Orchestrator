@@ -26,6 +26,7 @@ Create a test project directory:
 ```bash
 mkdir -p /tmp/test-orchestrator
 cd /tmp/test-orchestrator
+uv add --dev "claude-orchestrator @ file:///C:/Projects/Claude-Orchestrator"
 ```
 
 ### Create Test Master Plan
