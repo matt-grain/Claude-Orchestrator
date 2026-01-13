@@ -23,4 +23,4 @@ tmpclaude-*
 .ruff_cache
 
 # qi db
-core-index.db
+code-index.db
