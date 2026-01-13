@@ -20,15 +20,72 @@ from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, VerticalScroll
+from textual.containers import Container, Horizontal, VerticalScroll
 from textual.reactive import reactive
-from textual.widgets import RichLog, Static
+from textual.screen import ModalScreen
+from textual.widgets import Button, RichLog, Static
 from textual.worker import Worker, WorkerState
 
 from debussy.ui.base import STATUS_MAP, UIContext, UIState, UserAction, format_duration
 
 if TYPE_CHECKING:
     from debussy.core.models import Phase
+
+
+class QuitConfirmScreen(ModalScreen[bool]):
+    """Modal confirmation screen for quitting."""
+
+    CSS = """
+    QuitConfirmScreen {
+        align: center middle;
+    }
+
+    #quit-dialog {
+        width: 50;
+        height: 12;
+        border: solid $error;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #quit-dialog Static {
+        width: 100%;
+        content-align: center middle;
+    }
+
+    #quit-title {
+        text-style: bold;
+        color: $error;
+    }
+
+    #quit-buttons {
+        width: 100%;
+        height: auto;
+        layout: horizontal;
+        align: center middle;
+    }
+
+    #quit-buttons Button {
+        margin: 0 2;
+        min-width: 12;
+        height: 3;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        """Compose the quit confirmation dialog."""
+        with Container(id="quit-dialog"):
+            yield Static("Quit Orchestration?", id="quit-title")
+            yield Static("")
+            yield Static("This will cancel all running Claude instances.")
+            yield Static("")
+            with Horizontal(id="quit-buttons"):
+                yield Button("Quit", variant="error", id="quit-yes")
+                yield Button("Cancel", variant="primary", id="quit-no")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        self.dismiss(event.button.id == "quit-yes")
 
 
 class HUDHeader(Static):
@@ -226,9 +283,16 @@ class DebussyTUI(App):
         """Add a message to the log panel."""
         log = self.query_one("#log", RichLog)
         # Style tool commands like [Read: file.py] or [ERROR: ...] in italic dim
-        # Match pattern: [CapitalizedWord: ...]
-        if re.match(r"^\[[A-Z][a-zA-Z]*:", message):
-            log.write(f"[italic dim]{message}[/italic dim]")
+        # Match pattern: [CapitalizedWord: ...] or indented [ERROR: ...]
+        if re.match(r"^\s*\[[A-Z][a-zA-Z]*:", message):
+            # Transform [Tool: content] to styled markup
+            # Replace brackets to avoid Rich markup conflicts
+            styled = re.sub(
+                r"\[([A-Z][a-zA-Z]*):(.*?)\]",
+                r"[italic dim]⟨\1:\2⟩[/italic dim]",
+                message,
+            )
+            log.write(styled)
         else:
             log.write(message)
 
@@ -279,12 +343,32 @@ class DebussyTUI(App):
         self.set_timer(3.0, self.clear_hud_message)
 
     def action_quit_orchestration(self) -> None:
-        """Handle quit action."""
+        """Handle quit action - show confirmation dialog."""
+        self.push_screen(QuitConfirmScreen(), self._handle_quit_confirmation)
+
+    def _handle_quit_confirmation(self, confirmed: bool | None) -> None:
+        """Handle the result of quit confirmation dialog."""
+        if not confirmed:
+            self.set_hud_message("Quit cancelled")
+            self.set_timer(2.0, self.clear_hud_message)
+            return
+
+        # User confirmed quit
         self._action_queue.append(UserAction.QUIT)
-        # Cancel the worker and exit
+        self.write_log("")
+        self.write_log("[yellow]Shutting down...[/yellow]")
+
+        # Cancel the worker (this will trigger CancelledError in Claude runner)
         if self._worker:
             self._worker.cancel()
-        self.exit()
+
+        # Show cleanup message and exit after a brief delay
+        self.set_timer(0.5, self._finish_quit)
+
+    def _finish_quit(self) -> None:
+        """Finish quitting after cleanup."""
+        self.write_log("[green]All Claude instances cancelled. Cleanup complete.[/green]")
+        self.set_timer(1.0, lambda: self.exit())
 
     # =========================================================================
     # UI interface - these methods match NonInteractiveUI for compatibility
