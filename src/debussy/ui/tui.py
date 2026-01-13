@@ -515,14 +515,17 @@ class DebussyTUI(App):
     # =========================================================================
 
     def start(self, plan_name: str, total_phases: int) -> None:
-        """Initialize UI context (called by orchestrator)."""
+        """Initialize UI context (called by orchestrator).
+
+        Note: Called from async worker context (same event loop as Textual),
+        so direct method calls are safe - no call_later() needed.
+        """
         self.ui_context.plan_name = plan_name
         self.ui_context.total_phases = total_phases
         self.ui_context.start_time = time.time()
         self.ui_context.state = UIState.RUNNING
-        self.call_later(self.update_hud)
-        # Show welcome banner in log panel
-        self.call_later(self._write_welcome_banner, plan_name, total_phases)
+        self.update_hud()
+        self._write_welcome_banner(plan_name, total_phases)
 
     def _write_welcome_banner(self, plan_name: str, total_phases: int) -> None:
         """Write welcome banner to log panel."""
@@ -549,22 +552,22 @@ class DebussyTUI(App):
         self.ui_context.phase_title = phase.title
         self.ui_context.phase_index = index
         self.ui_context.start_time = time.time()
-        self.call_later(self.update_hud)
+        self.update_hud()
 
     def set_state(self, state: UIState) -> None:
         """Update the UI state."""
         self.ui_context.state = state
-        self.call_later(self.update_hud)
+        self.update_hud()
 
     def log_message(self, message: str) -> None:
         """Add a log message to the scrolling output."""
         if not self.ui_context.verbose:
             return
-        self.call_later(self.write_log, message)
+        self.write_log(message)
 
     def log_message_raw(self, message: str) -> None:
         """Add a raw log message (ignores verbose setting)."""
-        self.call_later(self.write_log, message)
+        self.write_log(message)
 
     # Alias for compatibility
     log_raw = log_message_raw
@@ -580,9 +583,9 @@ class DebussyTUI(App):
     def toggle_verbose(self) -> bool:
         """Toggle verbose logging."""
         self.ui_context.verbose = not self.ui_context.verbose
-        self.call_later(self.update_hud)
+        self.update_hud()
         state_str = "ON" if self.ui_context.verbose else "OFF"
-        self.call_later(self.write_log, f"[dim]Verbose logging: {state_str}[/dim]")
+        self.write_log(f"[dim]Verbose logging: {state_str}[/dim]")
         return self.ui_context.verbose
 
     def update_token_stats(
@@ -610,19 +613,19 @@ class DebussyTUI(App):
             self.ui_context.total_output_tokens += output_tokens
             self.ui_context.total_cost_usd += cost_usd
 
-        self.call_later(self.update_hud)
+        self.update_hud()
 
     def show_status_popup(self, details: dict[str, str]) -> None:
         """Show a detailed status popup."""
-        self.call_later(self.write_log, "")
-        self.call_later(self.write_log, "[bold]Current Status[/bold]")
+        self.write_log("")
+        self.write_log("[bold]Current Status[/bold]")
         for key, value in details.items():
-            self.call_later(self.write_log, f"  {key}: {value}")
-        self.call_later(self.write_log, "")
+            self.write_log(f"  {key}: {value}")
+        self.write_log("")
 
     def confirm(self, message: str) -> bool:
         """Ask for user confirmation (auto-confirms in TUI mode)."""
-        self.call_later(self.write_log, f"[yellow]{message}[/yellow] (auto-confirmed)")
+        self.write_log(f"[yellow]{message}[/yellow] (auto-confirmed)")
         return True
 
 
@@ -636,7 +639,14 @@ class TextualUI:
     def __init__(self) -> None:
         """Initialize the Textual UI wrapper."""
         self._app: DebussyTUI | None = None
-        self.context = UIContext()
+
+    @property
+    def context(self) -> UIContext:
+        """Return the app's UIContext (single source of truth)."""
+        if self._app:
+            return self._app.ui_context
+        # Fallback for when app isn't created yet - shouldn't happen in normal use
+        raise RuntimeError("TextualUI.context accessed before app was created")
 
     def create_app(
         self, orchestration_coro: Callable[[], Coroutine[Any, Any, str]] | None = None

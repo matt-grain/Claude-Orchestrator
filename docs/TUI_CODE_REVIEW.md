@@ -14,9 +14,9 @@
 | 2 | No cleanup on crash/exception | 🔴 Critical | ✅ Fixed | `tui.py:273-309` + `claude.py:139-151` (atexit) |
 | 3 | Race condition in quit flow | 🔴 Critical | ✅ Fixed | `tui.py:412-444` (`_graceful_shutdown`) |
 | 4 | Process tree not killed (grandchildren orphaned) | 🔴 Critical | ✅ Fixed | `claude.py:281-327` (`_kill_process_tree`) |
-| 5 | UI/business logic mixed in DebussyTUI | 🟡 Architecture | ⏳ Deferred | - |
-| 6 | Duplicate UIContext instances | 🟡 Architecture | ⏳ Deferred | - |
-| 7 | Unnecessary call_later() for async workers | 🟡 Architecture | ⏳ Deferred | - |
+| 5 | UI/business logic mixed in DebussyTUI | 🟡 Architecture | 📋 Planned | See `UI_LOGIC_SEPARATION_PLAN.md` |
+| 6 | Duplicate UIContext instances | 🟡 Architecture | ✅ Fixed | `tui.py:640-646` (`TextualUI.context` property) |
+| 7 | Unnecessary call_later() for async workers | 🟡 Architecture | ✅ Fixed | `tui.py:517-629` (removed 12 unnecessary calls) |
 | 8 | Manual HUD refresh instead of reactive | 🟢 Optimization | ⏳ Deferred | Already uses reactive attributes; further optimization requires significant refactor |
 | 9 | RichLog auto_scroll disabled | 🟢 Optimization | ✅ Fixed | `tui.py:437-447` (`action_toggle_autoscroll`) + `HotkeyBar.auto_scroll` reactive |
 | 10 | Missing Worker type annotation | 🟢 Optimization | ✅ Fixed | `tui.py:267` |
