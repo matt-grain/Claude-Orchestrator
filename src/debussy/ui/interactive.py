@@ -340,16 +340,16 @@ class InteractiveUI:
 
     def _keyboard_listener(self) -> None:
         """Background thread for keyboard input handling."""
-        import os
+        import contextlib
 
-        # Detect Git Bash/MINGW/Cygwin on Windows (they need Unix-style input)
-        is_mingw = os.environ.get("MSYSTEM") is not None
-        is_cygwin = "cygwin" in os.environ.get("TERM", "").lower()
-
-        # Platform-specific keyboard handling
-        if sys.platform == "win32" and not is_mingw and not is_cygwin:
-            self._keyboard_listener_windows()
+        # Try platform-specific keyboard handling with fallbacks
+        if sys.platform == "win32":
+            # On Windows, try msvcrt first (works in CMD/PowerShell)
+            # Git Bash/MINGW: msvcrt doesn't work, but termios also unavailable
+            with contextlib.suppress(Exception):
+                self._keyboard_listener_windows()
         else:
+            # Unix/Linux/macOS: use termios
             self._keyboard_listener_unix()
 
     def _keyboard_listener_windows(self) -> None:
