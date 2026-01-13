@@ -185,31 +185,6 @@ class TestOrchestrationControllerSkeleton:
         assert len(mock_app.posted_messages) == 1
         assert mock_app.posted_messages[0] is msg
 
-    def test_skeleton_methods_raise_not_implemented(
-        self, controller: OrchestrationController
-    ) -> None:
-        """Skeleton methods should raise NotImplementedError."""
-        with pytest.raises(NotImplementedError):
-            controller.start("plan", 5)
-
-        with pytest.raises(NotImplementedError):
-            from unittest.mock import Mock
-
-            mock_phase = Mock()
-            controller.set_phase(mock_phase, 1)
-
-        with pytest.raises(NotImplementedError):
-            controller.update_token_stats(100, 50, 0.05, 100)
-
-        with pytest.raises(NotImplementedError):
-            controller.queue_action(UserAction.PAUSE)
-
-        with pytest.raises(NotImplementedError):
-            controller.get_pending_action()
-
-        with pytest.raises(NotImplementedError):
-            controller.toggle_verbose()
-
     def test_stop_is_no_op(self, controller: OrchestrationController) -> None:
         """stop() should be a no-op (doesn't raise)."""
         # Should not raise
