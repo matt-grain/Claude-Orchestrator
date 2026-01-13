@@ -72,7 +72,7 @@ Debussy now detects previous incomplete runs and offers to resume, skipping comp
 ```bash
 debussy run plan.md --resume    # Auto-skip completed phases
 debussy run plan.md --restart   # Force fresh start, ignore history
-debussy run plan.md             # Interactive: prompts if previous run found
+debussy run plan.md             # Interactive: shows TUI dialog if previous run found
 ```
 
 ### Behavior
@@ -81,8 +81,25 @@ debussy run plan.md             # Interactive: prompts if previous run found
 |----------|----------|
 | Fresh plan (no history) | Normal start |
 | Previous incomplete run + `--resume` | Auto-skip completed phases |
-| Previous incomplete run + interactive | Prompts "Resume and skip completed phases?" |
+| Previous incomplete run + interactive | Shows TUI dialog: "Resume Previous Run?" |
 | Previous incomplete run + `--restart` | Ignores history, starts fresh |
+
+### TUI Resume Dialog
+
+When an incomplete run is detected in interactive mode, a modal dialog appears:
+
+```
+┌────────────────── Resume Previous Run? ──────────────────┐
+│                                                          │
+│         Found incomplete run fb8e3176                    │
+│         with 2 completed phase(s).                       │
+│                                                          │
+│              [ Resume ]    [ Start Fresh ]               │
+└──────────────────────────────────────────────────────────┘
+```
+
+- **Resume**: Skips completed phases, continues from where it left off
+- **Start Fresh**: Ignores previous progress, starts a new run
 
 ### Implementation Details
 
@@ -93,10 +110,15 @@ debussy run plan.md             # Interactive: prompts if previous run found
 **New Orchestrator parameter:**
 - `skip_phases: set[str]` - Phase IDs to skip (marked as completed for dependency checks)
 
+**New TUI components:**
+- `ResumeConfirmScreen` - Modal dialog for resume confirmation
+- `_handle_resume_confirmation()` - Callback that sets skip_phases based on user choice
+
 **Files modified:**
 - [src/debussy/core/state.py](../src/debussy/core/state.py) - New query methods
-- [src/debussy/cli.py](../src/debussy/cli.py) - New flags, `_check_resumable_run()` helper
+- [src/debussy/cli.py](../src/debussy/cli.py) - New flags, `_get_resumable_run_info()` helper
 - [src/debussy/core/orchestrator.py](../src/debussy/core/orchestrator.py) - Skip logic in `run()`
+- [src/debussy/ui/tui.py](../src/debussy/ui/tui.py) - ResumeConfirmScreen, dialog handling
 
 **Tests:** 12 new tests in `tests/test_state.py` (TestResumeAndSkip class)
 

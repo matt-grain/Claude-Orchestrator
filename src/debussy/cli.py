@@ -93,20 +93,16 @@ def _display_banner(
     console.print()
 
 
-def _check_resumable_run(
+def _get_resumable_run_info(
     master_plan: Path,
-    resume_run: bool,
-    interactive: bool,
-) -> set[str] | None:
-    """Check for a resumable run and return phases to skip.
+) -> tuple[str, set[str]] | None:
+    """Get info about a resumable run if one exists.
 
     Args:
         master_plan: Path to the master plan file
-        resume_run: Whether --resume flag was passed
-        interactive: Whether running in interactive mode
 
     Returns:
-        Set of phase IDs to skip, or None if starting fresh
+        Tuple of (run_id, completed_phase_ids) or None if no resumable run
     """
     orchestrator_dir = get_orchestrator_dir()
     state = StateManager(orchestrator_dir / "state.db")
@@ -119,25 +115,34 @@ def _check_resumable_run(
     if not completed:
         return None
 
-    if resume_run:
-        # Auto-resume mode
-        console.print(
-            f"[cyan]Resuming run {existing.id}: skipping {len(completed)} completed phase(s)[/cyan]"
-        )
-        return completed
+    return (existing.id, completed)
 
-    if interactive:
-        # Interactive prompt (only in interactive mode)
-        console.print(
-            f"\n[yellow]Found incomplete run {existing.id} "
-            f"with {len(completed)} completed phase(s).[/yellow]"
-        )
-        if typer.confirm("Resume and skip completed phases?"):
-            console.print("[cyan]Resuming...[/cyan]\n")
-            return completed
-        console.print("[dim]Starting fresh run...[/dim]\n")
 
-    return None
+def _check_resumable_run_noninteractive(
+    master_plan: Path,
+    resume_run: bool,
+) -> set[str] | None:
+    """Check for a resumable run and return phases to skip (non-interactive mode).
+
+    Args:
+        master_plan: Path to the master plan file
+        resume_run: Whether --resume flag was passed
+
+    Returns:
+        Set of phase IDs to skip, or None if starting fresh
+    """
+    if not resume_run:
+        return None
+
+    info = _get_resumable_run_info(master_plan)
+    if not info:
+        return None
+
+    run_id, completed = info
+    console.print(
+        f"[cyan]Resuming run {run_id}: skipping {len(completed)} completed phase(s)[/cyan]"
+    )
+    return completed
 
 
 @app.command()
@@ -201,31 +206,43 @@ def run(
     interactive = not no_interactive
     config = Config(model=model, output=output, interactive=interactive)  # type: ignore[arg-type]
 
-    # Check for resumable run (unless --restart)
-    skip_phases = None if restart else _check_resumable_run(master_plan, resume_run, interactive)
-
     # Parse plan and display banner (skip for TUI - it has its own header)
     plan = parse_master_plan(master_plan)
-    if not interactive:
-        _display_banner(
-            plan_name=plan.name,
-            phases=plan.phases,
-            model=model,
-            output=output,
-            max_retries=config.max_retries,
-            timeout=config.timeout,
-            interactive=interactive,
-        )
-
-        if phase:
-            console.print(f"[yellow]Starting from phase: {phase}[/yellow]\n")
 
     try:
         if interactive:
-            # Use Textual TUI as the main driver
-            _run_with_tui(master_plan, start_phase=phase, skip_phases=skip_phases, config=config)
+            # For TUI mode: get resumable info and let TUI handle the prompt
+            resumable_run = None if restart else _get_resumable_run_info(master_plan)
+            # If --resume flag, auto-skip without dialog
+            skip_phases = None
+            if resume_run and resumable_run:
+                skip_phases = resumable_run[1]
+                resumable_run = None  # Don't show dialog if auto-resuming
+            _run_with_tui(
+                master_plan,
+                start_phase=phase,
+                skip_phases=skip_phases,
+                resumable_run=resumable_run,
+                config=config,
+            )
         else:
             # Non-interactive (YOLO) mode
+            _display_banner(
+                plan_name=plan.name,
+                phases=plan.phases,
+                model=model,
+                output=output,
+                max_retries=config.max_retries,
+                timeout=config.timeout,
+                interactive=interactive,
+            )
+            if phase:
+                console.print(f"[yellow]Starting from phase: {phase}[/yellow]\n")
+
+            # Check for resumable run (--resume flag required in non-interactive)
+            skip_phases = (
+                None if restart else _check_resumable_run_noninteractive(master_plan, resume_run)
+            )
             run_id = run_orchestration(
                 master_plan, start_phase=phase, skip_phases=skip_phases, config=config
             )
@@ -241,11 +258,19 @@ def _run_with_tui(
     master_plan_path: Path,
     start_phase: str | None = None,
     skip_phases: set[str] | None = None,
+    resumable_run: tuple[str, set[str]] | None = None,
     config: object = None,
 ) -> None:
     """Run orchestration with Textual TUI.
 
     The TUI is the main driver and runs orchestration as a worker task.
+
+    Args:
+        master_plan_path: Path to the master plan file
+        start_phase: Optional phase ID to start from
+        skip_phases: Optional set of phase IDs to skip (from --resume flag)
+        resumable_run: Optional (run_id, completed_phases) for interactive resume dialog
+        config: Optional config overrides
     """
     from debussy.config import Config
     from debussy.core.orchestrator import Orchestrator
@@ -261,10 +286,14 @@ def _run_with_tui(
         project_root=Path.cwd(),
     )
 
-    # Create the TUI app with controller
-    tui = DebussyTUI()
+    # Create the TUI app with controller and resumable run info
+    tui = DebussyTUI(resumable_run=resumable_run)
     controller = OrchestrationController(tui)
     tui.set_controller(controller)
+
+    # Pre-set skip_phases if provided (from --resume flag)
+    if skip_phases:
+        tui._skip_phases = skip_phases
 
     # Define the orchestration coroutine that will run as a worker
     async def run_orchestration_task() -> str:
@@ -275,7 +304,8 @@ def _run_with_tui(
         if orchestrator.config.interactive:
             orchestrator.claude._output_callback = tui.log_message
 
-        return await orchestrator.run(start_phase=start_phase, skip_phases=skip_phases)
+        # Use skip_phases from TUI (may be set by resume dialog or --resume flag)
+        return await orchestrator.run(start_phase=start_phase, skip_phases=tui._skip_phases)
 
     # Pass the coroutine factory to the TUI and run
     tui._orchestration_coro = run_orchestration_task

@@ -51,6 +51,76 @@ if TYPE_CHECKING:
     from debussy.core.models import Phase
 
 
+class ResumeConfirmScreen(ModalScreen[bool]):
+    """Modal confirmation screen for resuming a previous run."""
+
+    CSS = """
+    ResumeConfirmScreen {
+        align: center middle;
+    }
+
+    #resume-dialog {
+        width: 60;
+        height: 14;
+        border: solid $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #resume-dialog Static {
+        width: 100%;
+        content-align: center middle;
+    }
+
+    #resume-title {
+        text-style: bold;
+        color: $primary;
+    }
+
+    #resume-info {
+        color: $text-muted;
+    }
+
+    #resume-buttons {
+        width: 100%;
+        height: auto;
+        layout: horizontal;
+        align: center middle;
+    }
+
+    #resume-buttons Button {
+        margin: 0 2;
+        min-width: 14;
+        height: 3;
+    }
+    """
+
+    def __init__(self, run_id: str, completed_count: int, **kwargs) -> None:
+        """Initialize with run info."""
+        super().__init__(**kwargs)
+        self._run_id = run_id
+        self._completed_count = completed_count
+
+    def compose(self) -> ComposeResult:
+        """Compose the resume confirmation dialog."""
+        with Container(id="resume-dialog"):
+            yield Static("Resume Previous Run?", id="resume-title")
+            yield Static("")
+            yield Static(
+                f"Found incomplete run [bold]{self._run_id[:8]}[/bold]",
+                id="resume-info",
+            )
+            yield Static(f"with {self._completed_count} completed phase(s).")
+            yield Static("")
+            with Horizontal(id="resume-buttons"):
+                yield Button("Resume", variant="primary", id="resume-yes")
+                yield Button("Start Fresh", variant="default", id="resume-no")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        self.dismiss(event.button.id == "resume-yes")
+
+
 class QuitConfirmScreen(ModalScreen[bool]):
     """Modal confirmation screen for quitting."""
 
@@ -275,6 +345,7 @@ class DebussyTUI(App):
     def __init__(
         self,
         orchestration_coro: Callable[[], Coroutine[Any, Any, str]] | None = None,
+        resumable_run: tuple[str, set[str]] | None = None,
         **kwargs,
     ) -> None:
         """Initialize the TUI.
@@ -282,12 +353,16 @@ class DebussyTUI(App):
         Args:
             orchestration_coro: Coroutine factory that runs the orchestration.
                                Should return the run_id when complete.
+            resumable_run: Optional tuple of (run_id, completed_phase_ids) if there's
+                          an incomplete run that can be resumed.
         """
         super().__init__(**kwargs)
         # Controller is required and owns all state (UIContext, action queue)
         # Set via set_controller() before app starts
         self._controller: OrchestrationController | None = None
         self._orchestration_coro = orchestration_coro
+        self._resumable_run = resumable_run  # (run_id, completed_phases) or None
+        self._skip_phases: set[str] | None = None  # Set by resume dialog
         self._worker: Worker[str] | None = None  # Properly typed
         self._run_id: str | None = None
         self._shutting_down: bool = False  # Prevent re-entrance during shutdown
@@ -337,9 +412,31 @@ class DebussyTUI(App):
         self.set_interval(1.0, self._update_timer)
         self.update_hud()
 
-        # Start orchestration as a worker if provided
+        # Check for resumable run first
+        if self._resumable_run:
+            run_id, completed_phases = self._resumable_run
+            self.push_screen(
+                ResumeConfirmScreen(run_id, len(completed_phases)),
+                self._handle_resume_confirmation,
+            )
+        elif self._orchestration_coro:
+            # Start orchestration immediately if no resume prompt needed
+            self._worker = self._start_orchestration()
+
+    def _handle_resume_confirmation(self, resume: bool | None) -> None:
+        """Handle the result of the resume confirmation dialog."""
+        if resume and self._resumable_run:
+            _, completed_phases = self._resumable_run
+            self._skip_phases = completed_phases
+            self.write_log(
+                f"[cyan]Resuming: skipping {len(completed_phases)} completed phase(s)[/cyan]"
+            )
+        else:
+            self.write_log("[dim]Starting fresh run...[/dim]")
+
+        # Now start orchestration
         if self._orchestration_coro:
-            self._worker = self._start_orchestration()  # Capture worker for cancellation
+            self._worker = self._start_orchestration()
 
     def on_unmount(self) -> None:
         """Cleanup when app unmounts (including crashes)."""

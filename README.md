@@ -123,6 +123,8 @@ debussy run <master-plan.md> [options]
 Options:
   --dry-run, -n       Parse and validate only, don't execute
   --phase, -p         Start from specific phase ID
+  --resume, -r        Resume previous run, skip completed phases
+  --restart           Start fresh, ignore previous progress
   --model, -m         Claude model: haiku, sonnet, opus (default: sonnet)
   --output, -o        Output mode: terminal, file, both (default: terminal)
   --no-interactive    YOLO mode: disable interactive dashboard (for CI)
@@ -228,6 +230,29 @@ By default, Debussy runs with an interactive dashboard that shows real-time prog
 | `v` | Toggle verbose logging on/off |
 | `k` | Skip current phase (with confirmation) |
 | `q` | Quit gracefully (saves state for resume) |
+
+### Resume Dialog
+
+When you run a plan that has a previous incomplete run (interrupted, failed, or paused), Debussy shows a modal dialog:
+
+```
+┌────────────────── Resume Previous Run? ──────────────────┐
+│                                                          │
+│         Found incomplete run fb8e3176                    │
+│         with 2 completed phase(s).                       │
+│                                                          │
+│              [ Resume ]    [ Start Fresh ]               │
+└──────────────────────────────────────────────────────────┘
+```
+
+- **Resume**: Skips completed phases, continues from where it left off
+- **Start Fresh**: Ignores previous progress, starts a new run
+
+You can bypass this dialog with CLI flags:
+```bash
+debussy run plan.md --resume   # Auto-resume, skip completed phases
+debussy run plan.md --restart  # Force fresh start, ignore history
+```
 
 ### YOLO Mode
 
