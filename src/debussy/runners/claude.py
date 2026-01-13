@@ -202,14 +202,22 @@ class ClaudeRunner:
         self._token_stats_callback = token_stats_callback
         self._agent_change_callback = agent_change_callback
         self._current_agent: str = "Debussy"  # Track current active agent
+        self._needs_agent_prefix: bool = True  # Emit prefix on next text output
+        self._pending_task_ids: set[str] = set()  # Track active Task tool_use_ids
 
     def _write_output(self, text: str, newline: bool = False) -> None:
         """Write output to terminal/file/callback based on output_mode."""
-        output = text + ("\n" if newline else "")
+        # Emit agent prefix if needed (start of new output block)
+        prefix = ""
+        if self._needs_agent_prefix:
+            prefix = f"[{self._current_agent}] "
+            self._needs_agent_prefix = False
+
+        output = prefix + text + ("\n" if newline else "")
 
         # Route to UI callback if available (interactive mode)
         if self._output_callback:
-            self._output_callback(text)
+            self._output_callback(prefix + text)
         elif self.output_mode in ("terminal", "both"):
             # Only write to stdout if no callback (non-interactive or YOLO mode)
             sys.stdout.write(output)
@@ -375,7 +383,7 @@ class ClaudeRunner:
             todos = tool_input.get("todos", [])
             self._write_output(f"\n[TodoWrite: {len(todos)} items]\n")
         elif tool_name == "Task":
-            self._display_task_tool(tool_input)
+            self._display_task_tool(content)
         else:
             self._write_output(f"\n[{tool_name}]\n")
 
@@ -392,23 +400,38 @@ class ClaudeRunner:
             command = command[:57] + "..."
         self._write_output(f"\n[Bash: {command}]\n")
 
-    def _display_task_tool(self, tool_input: dict) -> None:
+    def _display_task_tool(self, content: dict) -> None:
         """Display Task tool use and track agent change."""
+        tool_input = content.get("input", {})
+        tool_id = content.get("id", "")
         desc = tool_input.get("description", "")
         subagent_type = tool_input.get("subagent_type", "")
         self._write_output(f"\n[Task: {desc}]\n")
         if subagent_type:
             self._set_active_agent(subagent_type)
+            if tool_id:
+                self._pending_task_ids.add(tool_id)
 
     def _set_active_agent(self, agent: str) -> None:
         """Update the active agent and notify callback."""
         if agent != self._current_agent:
-            self._current_agent = agent
-            if self._agent_change_callback:
-                self._agent_change_callback(agent)
+            self._reset_active_agent(agent)
+
+    def _reset_active_agent(self, agent: str) -> None:
+        """Force-set the active agent (even if same) and emit prefix on next output."""
+        self._current_agent = agent
+        self._needs_agent_prefix = True
+        if self._agent_change_callback:
+            self._agent_change_callback(agent)
 
     def _display_tool_result(self, content: dict, result_text: str) -> None:
         """Display abbreviated tool result."""
+        # Check if this is a Task tool result - reset to Debussy
+        tool_use_id = content.get("tool_use_id", "")
+        if tool_use_id in self._pending_task_ids:
+            self._pending_task_ids.discard(tool_use_id)
+            self._reset_active_agent("Debussy")
+
         if not self.stream_output:
             return
 
@@ -501,7 +524,8 @@ class ClaudeRunner:
         prompt = custom_prompt or self._build_phase_prompt(phase)
 
         # Reset agent tracking at start of each phase
-        self._set_active_agent("Debussy")
+        self._reset_active_agent("Debussy")
+        self._pending_task_ids.clear()
 
         # Open log file if using file output
         if run_id:

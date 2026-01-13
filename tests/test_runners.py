@@ -684,6 +684,36 @@ class TestClaudeRunnerOutput:
 
         assert agent_changes == ["Explore"]  # Only one callback
 
+    def test_agent_tracking_reset_on_task_result(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Test that agent resets to Debussy when Task tool_result is received."""
+        agent_changes: list[str] = []
+        runner = ClaudeRunner(
+            temp_dir,
+            stream_output=True,
+            agent_change_callback=lambda a: agent_changes.append(a),
+        )
+
+        # Start a Task with id
+        runner._display_tool_use(
+            {
+                "name": "Task",
+                "id": "task_123",
+                "input": {"subagent_type": "Explore", "description": "Search"},
+            }
+        )
+        assert runner._current_agent == "Explore"
+        assert "task_123" in runner._pending_task_ids
+
+        # Receive the tool_result for that Task
+        runner._display_tool_result({"tool_use_id": "task_123"}, "")
+
+        assert runner._current_agent == "Debussy"
+        assert "task_123" not in runner._pending_task_ids
+        assert agent_changes == ["Explore", "Debussy"]
+
     def test_display_tool_use_unknown(
         self,
         temp_dir: Path,
@@ -809,18 +839,19 @@ class TestClaudeRunnerLogFiles:
         self,
         temp_dir: Path,
     ) -> None:
-        """Test _write_output in terminal mode."""
+        """Test _write_output in terminal mode with agent prefix."""
         runner = ClaudeRunner(temp_dir, output_mode="terminal")
 
         with patch("sys.stdout.write") as mock_stdout:
             runner._write_output("test output")
-            mock_stdout.assert_called_once_with("test output")
+            # First call includes agent prefix
+            mock_stdout.assert_called_once_with("[Debussy] test output")
 
     def test_write_output_file_mode(
         self,
         temp_dir: Path,
     ) -> None:
-        """Test _write_output in file mode."""
+        """Test _write_output in file mode with agent prefix."""
         log_dir = temp_dir / "logs"
         runner = ClaudeRunner(temp_dir, output_mode="file", log_dir=log_dir)
 
@@ -830,13 +861,13 @@ class TestClaudeRunnerLogFiles:
 
         log_file = log_dir / "run_run123_phase_phase1.log"
         content = log_file.read_text()
-        assert "test content" in content
+        assert "[Debussy] test content" in content
 
     def test_write_output_both_mode(
         self,
         temp_dir: Path,
     ) -> None:
-        """Test _write_output in both mode."""
+        """Test _write_output in both mode with agent prefix."""
         log_dir = temp_dir / "logs"
         runner = ClaudeRunner(temp_dir, output_mode="both", log_dir=log_dir)
 
@@ -844,13 +875,14 @@ class TestClaudeRunnerLogFiles:
 
         with patch("sys.stdout.write") as mock_stdout:
             runner._write_output("test output")
-            mock_stdout.assert_called_once_with("test output")
+            # First call includes agent prefix
+            mock_stdout.assert_called_once_with("[Debussy] test output")
 
         runner._close_log_file()
 
         log_file = log_dir / "run_run123_phase_phase1.log"
         content = log_file.read_text()
-        assert "test output" in content
+        assert "[Debussy] test output" in content
 
     def test_write_output_with_newline(
         self,
@@ -861,7 +893,42 @@ class TestClaudeRunnerLogFiles:
 
         with patch("sys.stdout.write") as mock_stdout:
             runner._write_output("test", newline=True)
-            mock_stdout.assert_called_once_with("test\n")
+            # First call includes agent prefix and newline
+            mock_stdout.assert_called_once_with("[Debussy] test\n")
+
+    def test_write_output_prefix_only_once(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Test that agent prefix only appears on first output, not subsequent ones."""
+        runner = ClaudeRunner(temp_dir, output_mode="terminal")
+
+        with patch("sys.stdout.write") as mock_stdout:
+            runner._write_output("first")
+            runner._write_output("second")
+            runner._write_output("third")
+
+            # Prefix only on first call
+            assert mock_stdout.call_count == 3
+            assert mock_stdout.call_args_list[0][0][0] == "[Debussy] first"
+            assert mock_stdout.call_args_list[1][0][0] == "second"
+            assert mock_stdout.call_args_list[2][0][0] == "third"
+
+    def test_write_output_prefix_after_agent_change(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Test that agent prefix reappears after agent change."""
+        runner = ClaudeRunner(temp_dir, output_mode="terminal")
+
+        with patch("sys.stdout.write") as mock_stdout:
+            runner._write_output("debussy output")
+            runner._set_active_agent("Explore")
+            runner._write_output("explore output")
+
+            assert mock_stdout.call_count == 2
+            assert mock_stdout.call_args_list[0][0][0] == "[Debussy] debussy output"
+            assert mock_stdout.call_args_list[1][0][0] == "[Explore] explore output"
 
 
 class TestClaudeRunnerStreamEvents:

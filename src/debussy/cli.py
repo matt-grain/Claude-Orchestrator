@@ -93,6 +93,53 @@ def _display_banner(
     console.print()
 
 
+def _check_resumable_run(
+    master_plan: Path,
+    resume_run: bool,
+    interactive: bool,
+) -> set[str] | None:
+    """Check for a resumable run and return phases to skip.
+
+    Args:
+        master_plan: Path to the master plan file
+        resume_run: Whether --resume flag was passed
+        interactive: Whether running in interactive mode
+
+    Returns:
+        Set of phase IDs to skip, or None if starting fresh
+    """
+    orchestrator_dir = get_orchestrator_dir()
+    state = StateManager(orchestrator_dir / "state.db")
+    existing = state.find_resumable_run(master_plan)
+
+    if not existing:
+        return None
+
+    completed = state.get_completed_phases(existing.id)
+    if not completed:
+        return None
+
+    if resume_run:
+        # Auto-resume mode
+        console.print(
+            f"[cyan]Resuming run {existing.id}: skipping {len(completed)} completed phase(s)[/cyan]"
+        )
+        return completed
+
+    if interactive:
+        # Interactive prompt (only in interactive mode)
+        console.print(
+            f"\n[yellow]Found incomplete run {existing.id} "
+            f"with {len(completed)} completed phase(s).[/yellow]"
+        )
+        if typer.confirm("Resume and skip completed phases?"):
+            console.print("[cyan]Resuming...[/cyan]\n")
+            return completed
+        console.print("[dim]Starting fresh run...[/dim]\n")
+
+    return None
+
+
 @app.command()
 def run(
     master_plan: Annotated[
@@ -109,6 +156,14 @@ def run(
         str | None,
         typer.Option("--phase", "-p", help="Start from specific phase ID"),
     ] = None,
+    resume_run: Annotated[
+        bool,
+        typer.Option("--resume", "-r", help="Resume previous run, skip completed phases"),
+    ] = False,
+    restart: Annotated[
+        bool,
+        typer.Option("--restart", help="Start fresh, ignore previous progress"),
+    ] = False,
     dry_run: Annotated[
         bool,
         typer.Option("--dry-run", "-n", help="Parse and validate only, don't execute"),
@@ -135,11 +190,19 @@ def run(
         _dry_run(master_plan)
         return
 
+    # Validate mutually exclusive flags
+    if resume_run and restart:
+        console.print("[red]Cannot use --resume and --restart together[/red]")
+        raise typer.Exit(1)
+
     # Create config with overrides
     from debussy.config import Config
 
     interactive = not no_interactive
     config = Config(model=model, output=output, interactive=interactive)  # type: ignore[arg-type]
+
+    # Check for resumable run (unless --restart)
+    skip_phases = None if restart else _check_resumable_run(master_plan, resume_run, interactive)
 
     # Parse plan and display banner (skip for TUI - it has its own header)
     plan = parse_master_plan(master_plan)
@@ -160,10 +223,12 @@ def run(
     try:
         if interactive:
             # Use Textual TUI as the main driver
-            _run_with_tui(master_plan, start_phase=phase, config=config)
+            _run_with_tui(master_plan, start_phase=phase, skip_phases=skip_phases, config=config)
         else:
             # Non-interactive (YOLO) mode
-            run_id = run_orchestration(master_plan, start_phase=phase, config=config)
+            run_id = run_orchestration(
+                master_plan, start_phase=phase, skip_phases=skip_phases, config=config
+            )
             console.print(f"\nOrchestration completed. Run ID: {run_id}")
             if output in ("file", "both"):
                 console.print("[dim]Logs saved to: .debussy/logs/[/dim]")
@@ -175,6 +240,7 @@ def run(
 def _run_with_tui(
     master_plan_path: Path,
     start_phase: str | None = None,
+    skip_phases: set[str] | None = None,
     config: object = None,
 ) -> None:
     """Run orchestration with Textual TUI.
@@ -209,7 +275,7 @@ def _run_with_tui(
         if orchestrator.config.interactive:
             orchestrator.claude._output_callback = tui.log_message
 
-        return await orchestrator.run(start_phase=start_phase)
+        return await orchestrator.run(start_phase=start_phase, skip_phases=skip_phases)
 
     # Pass the coroutine factory to the TUI and run
     tui._orchestration_coro = run_orchestration_task

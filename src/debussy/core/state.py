@@ -460,6 +460,60 @@ class StateManager:
                     runs.append(run)
             return runs
 
+    def find_resumable_run(self, master_plan_path: Path) -> RunState | None:
+        """Find an incomplete run for the same master plan.
+
+        Looks for runs that are paused, failed, or running (interrupted)
+        for the given plan path. Returns the most recent one.
+
+        Args:
+            master_plan_path: Path to the master plan file
+
+        Returns:
+            The most recent incomplete run for this plan, or None
+        """
+        with self._connection() as conn:
+            row = conn.execute(
+                """
+                SELECT id FROM runs
+                WHERE master_plan_path = ?
+                AND status IN (?, ?, ?)
+                ORDER BY started_at DESC
+                LIMIT 1
+                """,
+                (
+                    str(master_plan_path),
+                    RunStatus.PAUSED.value,
+                    RunStatus.FAILED.value,
+                    RunStatus.RUNNING.value,
+                ),
+            ).fetchone()
+
+            if row is None:
+                return None
+
+            return self.get_run(row["id"])
+
+    def get_completed_phases(self, run_id: str) -> set[str]:
+        """Get phase IDs that completed successfully in a run.
+
+        Args:
+            run_id: The run ID to query
+
+        Returns:
+            Set of phase IDs that have status 'completed'
+        """
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT phase_id FROM phase_executions
+                WHERE run_id = ? AND status = ?
+                """,
+                (run_id, PhaseStatus.COMPLETED.value),
+            ).fetchall()
+
+            return {r["phase_id"] for r in rows}
+
 
 def _parse_datetime(value: str | None) -> datetime | None:
     """Parse an ISO datetime string."""

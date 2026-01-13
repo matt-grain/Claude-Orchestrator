@@ -151,11 +151,16 @@ class Orchestrator:
 
         return self.plan
 
-    async def run(self, start_phase: str | None = None) -> str:
+    async def run(
+        self,
+        start_phase: str | None = None,
+        skip_phases: set[str] | None = None,
+    ) -> str:
         """Run the orchestration.
 
         Args:
             start_phase: Optional phase ID to start from
+            skip_phases: Optional set of phase IDs to skip (already completed)
 
         Returns:
             The run ID
@@ -185,6 +190,13 @@ class Orchestrator:
                 phases_to_run = phases_to_run[start_idx:]
 
             for idx, phase in enumerate(phases_to_run, 1):
+                # Skip phases that were already completed in a previous run
+                if skip_phases and phase.id in skip_phases:
+                    self.ui.log_message(
+                        f"[dim]Skipping completed phase {phase.id}: {phase.title}[/dim]"
+                    )
+                    phase.status = PhaseStatus.COMPLETED  # For dependency checks
+                    continue
                 # Check for user actions before each phase
                 if await self._handle_user_action(run_id, phase):
                     continue  # Phase was skipped
@@ -443,6 +455,7 @@ class Orchestrator:
 def run_orchestration(
     master_plan_path: Path,
     start_phase: str | None = None,
+    skip_phases: set[str] | None = None,
     config: Config | None = None,
     project_root: Path | None = None,
 ) -> str:
@@ -451,6 +464,7 @@ def run_orchestration(
     Args:
         master_plan_path: Path to the master plan file
         start_phase: Optional phase ID to start from
+        skip_phases: Optional set of phase IDs to skip (already completed)
         config: Optional configuration
         project_root: Optional project root (defaults to cwd)
 
@@ -459,4 +473,4 @@ def run_orchestration(
     """
     orchestrator = Orchestrator(master_plan_path, config, project_root=project_root)
     orchestrator.load_plan()
-    return asyncio.run(orchestrator.run(start_phase))
+    return asyncio.run(orchestrator.run(start_phase, skip_phases))
