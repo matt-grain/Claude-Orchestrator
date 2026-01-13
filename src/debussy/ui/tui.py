@@ -34,6 +34,7 @@ from debussy.ui.controller import OrchestrationController
 # NOTE: These message imports are needed at RUNTIME for Textual's on_* message handlers.
 # Textual's message dispatch system requires the actual types to be available.
 from debussy.ui.messages import (  # noqa: TC001
+    ActiveAgentChanged,
     HUDMessageSet,
     LogMessage,
     OrchestrationCompleted,
@@ -116,6 +117,7 @@ class HUDHeader(Static):
     context_pct = reactive(0)
     total_tokens = reactive(0)
     cost_usd = reactive(0.0)
+    active_agent = reactive("Debussy")  # Current agent (Debussy, Explore, etc.)
 
     def render(self) -> Text:
         """Render the HUD header."""
@@ -128,6 +130,14 @@ class HUDHeader(Static):
 
         # Status indicator
         text.append(f"● {self.status}", style=self.status_style)
+        text.append("  |  ", style="dim")
+
+        # Active agent (highlighted when not Debussy)
+        agent = self.active_agent
+        if agent == "Debussy":
+            text.append(f"🎹 {agent}", style="dim")
+        else:
+            text.append(f"🤖 {agent}", style="bold magenta")
         text.append("  |  ", style="dim")
 
         # Timer
@@ -571,6 +581,14 @@ class DebussyTUI(App):
         else:
             self.write_log(f"[red]Orchestration failed: {message.message}[/red]")
 
+    def on_active_agent_changed(self, message: ActiveAgentChanged) -> None:
+        """Handle active agent change message from controller.
+
+        Updates the HUD header to show which agent is currently working.
+        """
+        header = self.query_one("#hud-header", HUDHeader)
+        header.active_agent = message.agent
+
     def _handle_quit_confirmation(self, confirmed: bool | None) -> None:
         """Handle the result of quit confirmation dialog."""
         if not confirmed:
@@ -722,6 +740,11 @@ class DebussyTUI(App):
         self.write_log(f"[yellow]{message}[/yellow] (auto-confirmed)")
         return True
 
+    def set_active_agent(self, agent: str) -> None:
+        """Update the active agent display in the HUD."""
+        header = self.query_one("#hud-header", HUDHeader)
+        header.active_agent = agent
+
 
 class TextualUI:
     """Wrapper that provides the UI interface backed by DebussyTUI.
@@ -848,3 +871,8 @@ class TextualUI:
             self._app.update_token_stats(
                 input_tokens, output_tokens, cost_usd, context_tokens, context_window
             )
+
+    def set_active_agent(self, agent: str) -> None:
+        """Update the active agent display."""
+        if self._app:
+            self._app.set_active_agent(agent)

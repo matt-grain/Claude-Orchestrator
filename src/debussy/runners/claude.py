@@ -188,6 +188,7 @@ class ClaudeRunner:
         log_dir: Path | None = None,
         output_callback: Callable[[str], None] | None = None,
         token_stats_callback: Callable[[TokenStats], None] | None = None,
+        agent_change_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.project_root = project_root
         self.timeout = timeout
@@ -199,6 +200,8 @@ class ClaudeRunner:
         self._current_log_file: TextIO | None = None
         self._output_callback = output_callback
         self._token_stats_callback = token_stats_callback
+        self._agent_change_callback = agent_change_callback
+        self._current_agent: str = "Debussy"  # Track current active agent
 
     def _write_output(self, text: str, newline: bool = False) -> None:
         """Write output to terminal/file/callback based on output_mode."""
@@ -362,35 +365,47 @@ class ClaudeRunner:
 
         # Format based on tool type
         if tool_name in ("Read", "Write", "Edit"):
-            file_path = tool_input.get("file_path", "")
-            # Show just filename, not full path
-            filename = file_path.split("/")[-1].split("\\")[-1] if file_path else "?"
-            if tool_name == "Edit":
-                self._write_output(f"\n[Edit: {filename}]\n")
-            elif tool_name == "Write":
-                self._write_output(f"\n[Write: {filename}]\n")
-            else:
-                self._write_output(f"\n[Read: {filename}]\n")
+            self._display_file_tool(tool_name, tool_input)
         elif tool_name == "Bash":
-            command = tool_input.get("command", "")
-            # Truncate long commands
-            if len(command) > 60:
-                command = command[:57] + "..."
-            self._write_output(f"\n[Bash: {command}]\n")
-        elif tool_name == "Glob":
+            self._display_bash_tool(tool_input)
+        elif tool_name in ("Glob", "Grep"):
             pattern = tool_input.get("pattern", "")
-            self._write_output(f"\n[Glob: {pattern}]\n")
-        elif tool_name == "Grep":
-            pattern = tool_input.get("pattern", "")
-            self._write_output(f"\n[Grep: {pattern}]\n")
+            self._write_output(f"\n[{tool_name}: {pattern}]\n")
         elif tool_name == "TodoWrite":
             todos = tool_input.get("todos", [])
             self._write_output(f"\n[TodoWrite: {len(todos)} items]\n")
         elif tool_name == "Task":
-            desc = tool_input.get("description", "")
-            self._write_output(f"\n[Task: {desc}]\n")
+            self._display_task_tool(tool_input)
         else:
             self._write_output(f"\n[{tool_name}]\n")
+
+    def _display_file_tool(self, tool_name: str, tool_input: dict) -> None:
+        """Display Read/Write/Edit tool use."""
+        file_path = tool_input.get("file_path", "")
+        filename = file_path.split("/")[-1].split("\\")[-1] if file_path else "?"
+        self._write_output(f"\n[{tool_name}: {filename}]\n")
+
+    def _display_bash_tool(self, tool_input: dict) -> None:
+        """Display Bash tool use with truncated command."""
+        command = tool_input.get("command", "")
+        if len(command) > 60:
+            command = command[:57] + "..."
+        self._write_output(f"\n[Bash: {command}]\n")
+
+    def _display_task_tool(self, tool_input: dict) -> None:
+        """Display Task tool use and track agent change."""
+        desc = tool_input.get("description", "")
+        subagent_type = tool_input.get("subagent_type", "")
+        self._write_output(f"\n[Task: {desc}]\n")
+        if subagent_type:
+            self._set_active_agent(subagent_type)
+
+    def _set_active_agent(self, agent: str) -> None:
+        """Update the active agent and notify callback."""
+        if agent != self._current_agent:
+            self._current_agent = agent
+            if self._agent_change_callback:
+                self._agent_change_callback(agent)
 
     def _display_tool_result(self, content: dict, result_text: str) -> None:
         """Display abbreviated tool result."""
@@ -484,6 +499,9 @@ class ClaudeRunner:
             ExecutionResult with success status and session log
         """
         prompt = custom_prompt or self._build_phase_prompt(phase)
+
+        # Reset agent tracking at start of each phase
+        self._set_active_agent("Debussy")
 
         # Open log file if using file output
         if run_id:

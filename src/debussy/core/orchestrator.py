@@ -72,6 +72,7 @@ class Orchestrator:
         if self.config.interactive:
             self.claude._output_callback = self.ui.log
             self.claude._token_stats_callback = self._on_token_stats
+            self.claude._agent_change_callback = self._on_agent_change
 
         # Parse master plan
         self.plan: MasterPlan | None = None
@@ -86,6 +87,11 @@ class Orchestrator:
                 context_tokens=stats.context_tokens,
                 context_window=stats.context_window,
             )
+
+    def _on_agent_change(self, agent: str) -> None:
+        """Handle agent change from Claude runner."""
+        if hasattr(self.ui, "set_active_agent"):
+            self.ui.set_active_agent(agent)
 
     def _create_notifier(self) -> Notifier:
         """Create notifier based on configuration."""

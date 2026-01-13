@@ -12,6 +12,7 @@ Controller -> TUI (Commands):
 - HUDMessageSet: Transient message for hotkey bar
 - VerboseToggled: Verbose mode state changed
 - OrchestrationCompleted: Orchestration finished
+- ActiveAgentChanged: Active agent changed (Debussy -> Explore, etc.)
 
 TUI -> Controller (Events):
 - UserActionRequested: User triggered an action via keyboard
@@ -169,6 +170,19 @@ class OrchestrationCompleted(Message):
         self.run_id = run_id
         self.success = success
         self.message = message
+        super().__init__()
+
+
+class ActiveAgentChanged(Message):
+    """Active agent has changed (e.g., Debussy -> Explore -> Debussy)."""
+
+    def __init__(self, agent: str) -> None:
+        """Initialize the message.
+
+        Args:
+            agent: Name of the newly active agent (e.g., "Debussy", "Explore", "Plan")
+        """
+        self.agent = agent
         super().__init__()
 
 

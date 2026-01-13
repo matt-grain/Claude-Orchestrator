@@ -635,6 +635,55 @@ class TestClaudeRunnerOutput:
             runner._display_tool_use(content)
             assert "Task: Run tests" in mock_write.call_args[0][0]
 
+    def test_display_tool_use_task_with_agent_tracking(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Test that Task tool triggers agent change callback."""
+        agent_changes: list[str] = []
+        runner = ClaudeRunner(
+            temp_dir,
+            stream_output=True,
+            agent_change_callback=lambda a: agent_changes.append(a),
+        )
+        content = {
+            "name": "Task",
+            "input": {"description": "Explore codebase", "subagent_type": "Explore"},
+        }
+
+        runner._display_tool_use(content)
+        assert agent_changes == ["Explore"]
+        assert runner._current_agent == "Explore"
+
+    def test_agent_tracking_no_duplicate_callbacks(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Test that agent callback is not called when agent doesn't change."""
+        agent_changes: list[str] = []
+        runner = ClaudeRunner(
+            temp_dir,
+            stream_output=True,
+            agent_change_callback=lambda a: agent_changes.append(a),
+        )
+
+        # First Task call with Explore
+        runner._display_tool_use(
+            {
+                "name": "Task",
+                "input": {"subagent_type": "Explore"},
+            }
+        )
+        # Second Task call with same agent
+        runner._display_tool_use(
+            {
+                "name": "Task",
+                "input": {"subagent_type": "Explore"},
+            }
+        )
+
+        assert agent_changes == ["Explore"]  # Only one callback
+
     def test_display_tool_use_unknown(
         self,
         temp_dir: Path,
