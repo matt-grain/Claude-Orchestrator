@@ -6,7 +6,7 @@ This document tracks investigations and planned features for Debussy.
 
 ## 1. Subagent Log Capture
 
-**Status:** Investigation needed
+**Status:** ✅ IMPLEMENTED (2026-01-13)
 
 **Problem:** When a subagent (e.g., `file-existence-checker`, `Explore`) runs via the Task tool, only its tool calls appear in the logs. The subagent's reasoning text is not captured.
 
@@ -30,34 +30,94 @@ This document tracks investigations and planned features for Debussy.
 
 ### Investigation Tasks
 
-- [ ] Capture raw stream-json output when Task tool is invoked
-- [ ] Document how subagent output appears in the JSON stream
-- [ ] Check if subagent text appears in `tool_result` content
-- [ ] Update [CLAUDE_JSON_FORMAT.md](CLAUDE_JSON_FORMAT.md) with Task tool event structure
+- [x] Capture raw stream-json output when Task tool is invoked
+- [x] Document how subagent output appears in the JSON stream
+- [x] Check if subagent text appears in `tool_result` content
+- [x] Update [CLAUDE_JSON_FORMAT.md](CLAUDE_JSON_FORMAT.md) with Task tool event structure
 
-### Hypothesis
+### Investigation Findings (2026-01-13)
 
-The subagent's output might be embedded in the `tool_result` event when the Task completes:
+**HYPOTHESIS CONFIRMED!** ✅
+
+The Task tool result has a **distinct structure** that differs from regular tool results:
+
+#### Task Tool Use (in `assistant` event):
+```json
+{
+  "type": "assistant",
+  "message": {
+    "content": [{
+      "type": "tool_use",
+      "id": "toolu_01EMBD2Ez8pt8LWj5ovow1mU",
+      "name": "Task",
+      "input": {
+        "subagent_type": "Explore",
+        "description": "Find Python files in current directory",
+        "prompt": "Find all Python files (.py)..."
+      }
+    }]
+  }
+}
+```
+
+#### Task Tool Result (in `user` event):
 ```json
 {
   "type": "user",
   "message": {
     "content": [{
       "type": "tool_result",
-      "tool_use_id": "task_xxx",
-      "content": "Full subagent output including reasoning..."
+      "tool_use_id": "toolu_01EMBD2Ez8pt8LWj5ovow1mU",
+      "content": [
+        {
+          "type": "text",
+          "text": "Perfect! I now have a comprehensive understanding..."
+        },
+        {
+          "type": "text",
+          "text": "agentId: ae27ebb (for resuming to continue this agent's work if needed)"
+        }
+      ]
     }]
   }
 }
 ```
 
-If so, we could parse and display this content with the agent prefix.
+**Key Differences from Regular Tool Results:**
+1. **Regular tools**: `content` is a **string** (e.g., file contents, bash output)
+2. **Task tool**: `content` is a **list** of `{type: "text", text: "..."}` objects
 
-### Implementation Plan (if hypothesis confirmed)
+**Content Structure:**
+- **Item 0**: Full subagent reasoning/output text (can be thousands of chars)
+- **Item 1**: Metadata including `agentId` for resumption
 
-1. In `_display_tool_result()`, check if `tool_use_id` is in `_pending_task_ids`
-2. If yes, display the `content` with the subagent's name prefix
-3. Then reset to Debussy
+### Implementation Plan
+
+1. **Track Task tool_use_ids**: In `_display_stream_event()`, when we see a `tool_use` with `name="Task"`, store:
+   - `tool_use_id` → `subagent_type` mapping in `_pending_task_ids: dict[str, str]`
+
+2. **Detect Task results**: In `_display_tool_result()`:
+   ```python
+   if tool_use_id in self._pending_task_ids:
+       # Content is list format - extract subagent output
+       if isinstance(content, list):
+           agent_name = self._pending_task_ids[tool_use_id]
+           for item in content:
+               if item.get("type") == "text":
+                   text = item.get("text", "")
+                   # Display with agent prefix
+                   self._display_subagent_output(agent_name, text)
+           del self._pending_task_ids[tool_use_id]
+   ```
+
+3. **Display subagent output**: Parse the text for meaningful lines and display with `[AgentName]` prefix
+
+4. **Reset to Debussy**: After processing Task result, reset `current_agent` to "Debussy"
+
+**Files to modify:**
+- [src/debussy/runners/claude.py](../src/debussy/runners/claude.py):269 - `_display_stream_event()` and `_display_tool_result()`
+
+**Test prototype:** `scripts/investigate_task_output.py` - captures raw JSON stream for analysis
 
 ---
 
@@ -227,8 +287,10 @@ debussy run plan.md -L             # Short form
 ## Priority Order
 
 1. ~~**Resume & Skip**~~ - ✅ DONE
-2. **Subagent Logs** - Better visibility, helps debugging
+2. ~~**Subagent Logs**~~ - ✅ DONE
 3. ~~**Memory System**~~ - ✅ DONE (via LTM integration)
+
+**All features on this list are now implemented!** 🎉
 
 ---
 

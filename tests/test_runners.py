@@ -1101,3 +1101,264 @@ class TestClaudeRunnerStreamEvents:
         with patch.object(runner, "_display_tool_result") as mock_result:
             runner._display_stream_event(event, full_text)
             mock_result.assert_called_once()
+
+
+class TestSubagentLogCapture:
+    """Tests for subagent output display from Task tool results."""
+
+    def test_task_tool_registers_pending_id(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Test that Task tool use registers tool_id -> subagent_type mapping."""
+        runner = ClaudeRunner(temp_dir, stream_output=True)
+        content = {
+            "id": "toolu_abc123",
+            "name": "Task",
+            "input": {"subagent_type": "Explore", "description": "Find files"},
+        }
+
+        runner._display_tool_use(content)
+
+        assert "toolu_abc123" in runner._pending_task_ids
+        assert runner._pending_task_ids["toolu_abc123"] == "Explore"
+
+    def test_task_result_displays_subagent_output(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Test that Task result displays subagent reasoning with prefix."""
+        runner = ClaudeRunner(temp_dir, stream_output=True)
+
+        # Register pending Task
+        runner._pending_task_ids["toolu_abc123"] = "Explore"
+
+        # Simulate Task tool result (list format)
+        content = {
+            "tool_use_id": "toolu_abc123",
+            "content": [
+                {"type": "text", "text": "Found 5 Python files.\nAnalysis complete."},
+                {"type": "text", "text": "agentId: xyz789 (for resuming)"},
+            ],
+        }
+
+        with patch.object(runner, "_write_output") as mock_write:
+            runner._display_tool_result(content, "")
+
+            # Should output lines with agent prefix (includes trailing \n)
+            calls = [c[0][0] for c in mock_write.call_args_list]
+            assert "[Explore] Found 5 Python files.\n" in calls
+            assert "[Explore] Analysis complete.\n" in calls
+            # agentId line should be skipped
+            assert not any("agentId" in c for c in calls)
+
+    def test_task_result_resets_agent_to_debussy(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Test that agent resets to Debussy after Task result."""
+        agent_changes: list[str] = []
+        runner = ClaudeRunner(
+            temp_dir,
+            stream_output=True,
+            agent_change_callback=lambda a: agent_changes.append(a),
+        )
+
+        # Register pending Task and set agent
+        runner._pending_task_ids["toolu_abc123"] = "Explore"
+        runner._current_agent = "Explore"
+
+        # Receive result
+        content = {
+            "tool_use_id": "toolu_abc123",
+            "content": [{"type": "text", "text": "Done."}],
+        }
+        runner._display_tool_result(content, "")
+
+        assert runner._current_agent == "Debussy"
+        assert "Debussy" in agent_changes
+
+    def test_task_result_removes_pending_id(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Test that pending Task ID is removed after result."""
+        runner = ClaudeRunner(temp_dir, stream_output=True)
+        runner._pending_task_ids["toolu_abc123"] = "Explore"
+
+        content = {
+            "tool_use_id": "toolu_abc123",
+            "content": [{"type": "text", "text": "Done."}],
+        }
+        runner._display_tool_result(content, "")
+
+        assert "toolu_abc123" not in runner._pending_task_ids
+
+    def test_non_task_result_not_affected(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Test that regular tool results are not treated as Task results."""
+        runner = ClaudeRunner(temp_dir, stream_output=True)
+
+        # No pending Task IDs
+        content = {
+            "tool_use_id": "toolu_xyz999",
+            "content": "regular string content",
+        }
+
+        with patch.object(runner, "_write_output") as mock_write:
+            runner._display_tool_result(content, "")
+            # No output for regular non-error results
+            mock_write.assert_not_called()
+
+    def test_display_subagent_output_filters_empty_lines(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Test that empty lines are filtered from subagent output."""
+        runner = ClaudeRunner(temp_dir, stream_output=True)
+
+        content_list = [
+            {"type": "text", "text": "Line 1\n\n  \n\nLine 2"},
+        ]
+
+        with patch.object(runner, "_write_output") as mock_write:
+            runner._display_subagent_output("Explore", content_list)
+
+            calls = [c[0][0] for c in mock_write.call_args_list]
+            assert len(calls) == 2
+            assert "[Explore] Line 1\n" in calls
+            assert "[Explore] Line 2\n" in calls
+
+    def test_display_subagent_output_handles_non_text_items(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Test that non-text items in content list are skipped."""
+        runner = ClaudeRunner(temp_dir, stream_output=True)
+
+        content_list = [
+            {"type": "image", "data": "base64..."},  # Non-text item
+            {"type": "text", "text": "Valid text"},
+            "not a dict",  # Invalid item
+        ]
+
+        with patch.object(runner, "_write_output") as mock_write:
+            runner._display_subagent_output("Plan", content_list)
+
+            calls = [c[0][0] for c in mock_write.call_args_list]
+            assert len(calls) == 1
+            assert "[Plan] Valid text\n" in calls
+
+    def test_pending_task_ids_cleared_on_phase_start(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Test that pending Task IDs are cleared at the start of each phase."""
+        runner = ClaudeRunner(temp_dir, stream_output=True)
+
+        # Add some pending IDs
+        runner._pending_task_ids["old_task_1"] = "Explore"
+        runner._pending_task_ids["old_task_2"] = "Plan"
+
+        # Simulate what happens at phase start
+        runner._reset_active_agent("Debussy")
+        runner._pending_task_ids.clear()
+
+        assert len(runner._pending_task_ids) == 0
+
+    def test_full_task_workflow(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Test complete Task tool workflow: use -> result -> agent reset."""
+        agent_changes: list[str] = []
+        outputs: list[str] = []
+
+        runner = ClaudeRunner(
+            temp_dir,
+            stream_output=True,
+            agent_change_callback=lambda a: agent_changes.append(a),
+            output_callback=lambda t: outputs.append(t),
+        )
+
+        # 1. Task tool_use event
+        runner._display_tool_use(
+            {
+                "id": "task_001",
+                "name": "Task",
+                "input": {"subagent_type": "Explore", "description": "Find Python files"},
+            }
+        )
+
+        assert runner._current_agent == "Explore"
+        assert "task_001" in runner._pending_task_ids
+        assert agent_changes == ["Explore"]
+
+        # 2. Task tool_result event
+        runner._display_tool_result(
+            {
+                "tool_use_id": "task_001",
+                "content": [
+                    {"type": "text", "text": "Found 3 files:\n- main.py\n- utils.py\n- tests.py"},
+                    {"type": "text", "text": "agentId: abc123"},
+                ],
+            },
+            "",
+        )
+
+        assert runner._current_agent == "Debussy"
+        assert "task_001" not in runner._pending_task_ids
+        assert agent_changes == ["Explore", "Debussy"]
+
+        # Subagent output should have been displayed
+        assert any("[Explore] Found 3 files:" in o for o in outputs)
+        assert any("[Explore] - main.py" in o for o in outputs)
+
+    def test_task_result_string_format_custom_agent(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Test that Task result with string content (custom agents) displays correctly."""
+        outputs: list[str] = []
+        runner = ClaudeRunner(
+            temp_dir,
+            stream_output=True,
+            output_callback=lambda t: outputs.append(t),
+        )
+
+        # Register pending Task for custom agent
+        runner._pending_task_ids["toolu_custom"] = "file-existence-checker"
+
+        # Custom agents return content as STRING, not list
+        custom_content = (
+            "## File Existence Check\n| File | Status |\n| calc.py | EXISTS |\n## Verdict\nAPPROVED"
+        )
+        content = {
+            "tool_use_id": "toolu_custom",
+            "content": custom_content,
+        }
+        runner._display_tool_result(content, "")
+
+        # Should display with agent prefix
+        assert any("[file-existence-checker] ## File Existence Check" in o for o in outputs)
+        assert any("[file-existence-checker] APPROVED" in o for o in outputs)
+
+    def test_display_subagent_output_str(
+        self,
+        temp_dir: Path,
+    ) -> None:
+        """Test _display_subagent_output_str method directly."""
+        runner = ClaudeRunner(temp_dir, stream_output=True)
+
+        content = "Line 1\nLine 2\n\nLine 3"
+
+        with patch.object(runner, "_write_output") as mock_write:
+            runner._display_subagent_output_str("MyAgent", content)
+
+            calls = [c[0][0] for c in mock_write.call_args_list]
+            assert len(calls) == 3
+            assert "[MyAgent] Line 1\n" in calls
+            assert "[MyAgent] Line 2\n" in calls
+            assert "[MyAgent] Line 3\n" in calls

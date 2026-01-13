@@ -203,23 +203,59 @@ class ClaudeRunner:
         self._token_stats_callback = token_stats_callback
         self._agent_change_callback = agent_change_callback
         self._current_agent: str = "Debussy"  # Track current active agent
-        self._needs_agent_prefix: bool = True  # Emit prefix on next text output
-        self._pending_task_ids: set[str] = set()  # Track active Task tool_use_ids
+        self._needs_line_prefix: bool = True  # Emit prefix on next line output
+        # Track active Task tool_use_ids -> subagent_type for subagent output display
+        self._pending_task_ids: dict[str, str] = {}
         self._with_ltm = with_ltm  # Enable LTM learnings in prompts
 
     def _write_output(self, text: str, newline: bool = False) -> None:
         """Write output to terminal/file/callback based on output_mode."""
-        # Emit agent prefix if needed (start of new output block)
-        prefix = ""
-        if self._needs_agent_prefix:
-            prefix = f"[{self._current_agent}] "
-            self._needs_agent_prefix = False
+        # When we're inside a Task (subagent), prefix each NEW line
+        # This ensures streaming output from subagents is clearly attributed
+        in_subagent = self._current_agent != "Debussy"
 
-        output = prefix + text + ("\n" if newline else "")
+        if in_subagent and "\n" in text:
+            # Split by newlines and prefix each NEW line for subagent output
+            lines = text.split("\n")
+            for i, line in enumerate(lines):
+                is_last = i == len(lines) - 1
+                has_content = bool(line)
+                ends_with_newline = not is_last  # All but last have implicit newline
+
+                if has_content:
+                    # Prefix this line only if we're at start of a new line
+                    if self._needs_line_prefix:
+                        self._write_single_line(f"[{self._current_agent}] {line}")
+                    else:
+                        self._write_single_line(line)
+                    # After content, newline determines if next needs prefix
+                    self._needs_line_prefix = ends_with_newline
+
+                if ends_with_newline:
+                    self._write_single_line("", newline=True)
+                    self._needs_line_prefix = True
+
+            if newline and not text.endswith("\n"):
+                self._write_single_line("", newline=True)
+                self._needs_line_prefix = True
+        else:
+            # No newlines in text - add prefix if needed, continue current line
+            prefix = ""
+            if self._needs_line_prefix:
+                prefix = f"[{self._current_agent}] "
+                self._needs_line_prefix = False
+
+            self._write_single_line(prefix + text, newline=newline)
+            if newline:
+                self._needs_line_prefix = True
+
+    def _write_single_line(self, text: str, newline: bool = False) -> None:
+        """Write a single line to output destinations."""
+        output = text + ("\n" if newline else "")
 
         # Route to UI callback if available (interactive mode)
         if self._output_callback:
-            self._output_callback(prefix + text)
+            self._output_callback(text)
         elif self.output_mode in ("terminal", "both"):
             # Only write to stdout if no callback (non-interactive or YOLO mode)
             sys.stdout.write(output)
@@ -412,7 +448,7 @@ class ClaudeRunner:
         if subagent_type:
             self._set_active_agent(subagent_type)
             if tool_id:
-                self._pending_task_ids.add(tool_id)
+                self._pending_task_ids[tool_id] = subagent_type
 
     def _set_active_agent(self, agent: str) -> None:
         """Update the active agent and notify callback."""
@@ -422,27 +458,79 @@ class ClaudeRunner:
     def _reset_active_agent(self, agent: str) -> None:
         """Force-set the active agent (even if same) and emit prefix on next output."""
         self._current_agent = agent
-        self._needs_agent_prefix = True
+        self._needs_line_prefix = True
         if self._agent_change_callback:
             self._agent_change_callback(agent)
 
     def _display_tool_result(self, content: dict, result_text: str) -> None:
         """Display abbreviated tool result."""
-        # Check if this is a Task tool result - reset to Debussy
         tool_use_id = content.get("tool_use_id", "")
+        result_content = content.get("content", "")
+
+        # Check if this is a Task tool result
         if tool_use_id in self._pending_task_ids:
-            self._pending_task_ids.discard(tool_use_id)
+            agent_name = self._pending_task_ids.pop(tool_use_id)
+            if self.stream_output:
+                # Task results can be list format (built-in agents) or string (custom agents)
+                if isinstance(result_content, list):
+                    self._display_subagent_output(agent_name, result_content)
+                elif isinstance(result_content, str) and result_content:
+                    self._display_subagent_output_str(agent_name, result_content)
             self._reset_active_agent("Debussy")
+            return
 
         if not self.stream_output:
             return
 
         # Check for errors
         if content.get("is_error"):
-            error_msg = result_text or content.get("content", "")
+            error_msg = result_text or (result_content if isinstance(result_content, str) else "")
             if len(error_msg) > 100:
                 error_msg = error_msg[:97] + "..."
             self._write_output(f"  [ERROR: {error_msg}]\n")
+
+    def _display_subagent_output(self, agent_name: str, content_list: list) -> None:
+        """Display subagent output from Task tool result.
+
+        Task results have content as list of {type: "text", text: "..."} objects.
+        Item 0 is the full subagent reasoning/output.
+        Item 1+ may contain metadata (agentId, etc).
+        """
+        for item in content_list:
+            if not isinstance(item, dict) or item.get("type") != "text":
+                continue
+
+            text = item.get("text", "")
+            if not text:
+                continue
+
+            # Skip metadata items (agentId lines)
+            if text.startswith("agentId:"):
+                continue
+
+            # Display each meaningful line with agent prefix
+            for line in text.split("\n"):
+                stripped = line.strip()
+                if stripped:
+                    self._write_output(f"[{agent_name}] {stripped}\n")
+
+    def _display_subagent_output_str(self, agent_name: str, content: str) -> None:
+        """Display subagent output from Task tool result (string format).
+
+        Custom agents return content as a plain string, not a list.
+        """
+        if not content:
+            return
+
+        # Skip metadata lines
+        if content.startswith("agentId:"):
+            return
+
+        # Display each meaningful line with agent prefix
+        for line in content.split("\n"):
+            stripped = line.strip()
+            if stripped:
+                self._write_output(f"[{agent_name}] {stripped}\n")
 
     async def _stream_stderr(
         self,

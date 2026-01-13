@@ -42,6 +42,51 @@ Contains Claude's response and usage data:
 }
 ```
 
+#### Tool Use Content Block
+When Claude calls a tool, content includes a `tool_use` block:
+```json
+{
+  "type": "assistant",
+  "message": {
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "toolu_01ABC123...",
+        "name": "Bash",
+        "input": {"command": "ls -la"}
+      }
+    ]
+  }
+}
+```
+
+#### Task Tool Use (Subagent Invocation)
+The Task tool spawns a subagent with specific type and prompt:
+```json
+{
+  "type": "assistant",
+  "message": {
+    "content": [
+      {
+        "type": "tool_use",
+        "id": "toolu_01XYZ789...",
+        "name": "Task",
+        "input": {
+          "subagent_type": "Explore",
+          "description": "Find Python files",
+          "prompt": "Find all Python files in the current directory..."
+        }
+      }
+    ]
+  }
+}
+```
+
+Key fields for tracking:
+- **`id`**: Used to match with corresponding `tool_result`
+- **`input.subagent_type`**: The agent type (Explore, Plan, Bash, etc.)
+- **`input.description`**: Brief description shown in logs
+
 ### 3. Content Block Delta (Streaming)
 Real-time text chunks:
 ```json
@@ -71,6 +116,37 @@ Contains tool execution results:
   }
 }
 ```
+
+#### Tool Result Content Formats
+
+**Regular tools** (Bash, Read, Glob, etc.): `content` is a **string**
+```json
+{
+  "type": "tool_result",
+  "tool_use_id": "toolu_01ABC...",
+  "content": "file contents or command output as string"
+}
+```
+
+**Task tool** (subagent invocation): `content` is a **list** of text objects
+```json
+{
+  "type": "tool_result",
+  "tool_use_id": "toolu_01XYZ...",
+  "content": [
+    {
+      "type": "text",
+      "text": "Full subagent output including reasoning text..."
+    },
+    {
+      "type": "text",
+      "text": "agentId: ae27ebb (for resuming to continue this agent's work if needed)"
+    }
+  ]
+}
+```
+
+This distinction allows detection of Task results by checking `isinstance(content, list)`.
 
 ### 5. Result Event (Final)
 Last event with session summary:
