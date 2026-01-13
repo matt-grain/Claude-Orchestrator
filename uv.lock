@@ -121,6 +121,11 @@ dependencies = [
     { name = "typer" },
 ]
 
+[package.optional-dependencies]
+ltm = [
+    { name = "ltm" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "bandit" },
@@ -139,6 +144,7 @@ dev = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "ltm", marker = "extra == 'ltm'", url = "https://github.com/matt-grain/Claude-LTM/releases/download/v0.4.5/ltm-0.4.5-py3-none-any.whl" },
     { name = "plyer", specifier = ">=2.1.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pyyaml", specifier = ">=6.0.3" },
@@ -146,6 +152,7 @@ requires-dist = [
     { name = "textual", specifier = ">=3.0.0" },
     { name = "typer", specifier = ">=0.21.1" },
 ]
+provides-extras = ["ltm"]
 
 [package.metadata.requires-dev]
 dev = [
