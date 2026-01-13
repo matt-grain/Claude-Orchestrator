@@ -10,6 +10,8 @@ The TUI runs as the main application and spawns orchestration as a worker.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
 import time
 from collections import deque
@@ -26,7 +28,10 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, RichLog, Static
 from textual.worker import Worker, WorkerState
 
+from debussy.runners.claude import pid_registry
 from debussy.ui.base import STATUS_MAP, UIContext, UIState, UserAction, format_duration
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from debussy.core.models import Phase
@@ -249,8 +254,9 @@ class DebussyTUI(App):
         self.ui_context = UIContext()
         self._action_queue: deque[UserAction] = deque()
         self._orchestration_coro = orchestration_coro
-        self._worker: Worker | None = None
+        self._worker: Worker[str] | None = None  # Properly typed
         self._run_id: str | None = None
+        self._shutting_down: bool = False  # Prevent re-entrance during shutdown
 
     def compose(self) -> ComposeResult:
         """Compose the app layout."""
@@ -267,7 +273,45 @@ class DebussyTUI(App):
 
         # Start orchestration as a worker if provided
         if self._orchestration_coro:
-            self._start_orchestration()
+            self._worker = self._start_orchestration()  # Capture worker for cancellation
+
+    def on_unmount(self) -> None:
+        """Cleanup when app unmounts (including crashes)."""
+        logger.debug("TUI unmounting, running cleanup")
+        self._cleanup_all_processes()
+
+    def _cleanup_all_processes(self) -> None:
+        """Cancel worker and kill any orphaned Claude processes.
+
+        This is the primary cleanup method, called from multiple places:
+        - on_unmount (normal exit, crashes)
+        - _handle_quit_confirmation (user quit)
+        """
+        # Cancel the worker if running
+        if self._worker and self._worker.is_running:
+            logger.debug("Cancelling orchestration worker")
+            self._worker.cancel()
+
+        # Safety net: kill any registered PIDs that might have escaped
+        active_pids = pid_registry.get_active_pids()
+        if active_pids:
+            logger.warning(f"Found {len(active_pids)} orphaned PIDs, killing: {active_pids}")
+            killed = pid_registry.kill_all()
+            if killed:
+                logger.info(f"Killed orphaned PIDs: {killed}")
+
+    def _verify_cleanup_complete(self) -> bool:
+        """Verify all Claude processes are dead. Returns True if clean."""
+        still_alive = pid_registry.verify_all_dead()
+        if still_alive:
+            logger.error(f"PIDs still alive after cleanup: {still_alive}")
+            # Try one more time
+            pid_registry.kill_all()
+            still_alive = pid_registry.verify_all_dead()
+            if still_alive:
+                logger.critical(f"FAILED to kill PIDs: {still_alive}")
+                return False
+        return True
 
     @work(exclusive=True)
     async def _start_orchestration(self) -> str:
@@ -396,22 +440,52 @@ class DebussyTUI(App):
             self.set_timer(2.0, self.clear_hud_message)
             return
 
+        # Prevent re-entrance
+        if self._shutting_down:
+            return
+        self._shutting_down = True
+
         # User confirmed quit
         self._action_queue.append(UserAction.QUIT)
         self.write_log("")
         self.write_log("[yellow]Shutting down...[/yellow]")
 
+        # Start graceful shutdown (waits for actual process termination)
+        self._graceful_shutdown()
+
+    @work(exclusive=True, group="shutdown")
+    async def _graceful_shutdown(self) -> None:
+        """Gracefully shutdown, waiting for subprocess cleanup."""
         # Cancel the worker (this will trigger CancelledError in Claude runner)
-        if self._worker:
+        if self._worker and self._worker.is_running:
             self._worker.cancel()
+            self.call_later(
+                self.write_log, "[dim]Waiting for Claude processes to terminate...[/dim]"
+            )
 
-        # Show cleanup message and exit after a brief delay
-        self.set_timer(0.5, self._finish_quit)
+            # Wait for worker to actually finish (with timeout)
+            for _ in range(50):  # Max 5 seconds
+                if not self._worker.is_running:
+                    break
+                await asyncio.sleep(0.1)
 
-    def _finish_quit(self) -> None:
-        """Finish quitting after cleanup."""
-        self.write_log("[green]All Claude instances cancelled. Cleanup complete.[/green]")
-        self.set_timer(1.0, lambda: self.exit())
+        # Cleanup any orphaned processes
+        self._cleanup_all_processes()
+
+        # Verify everything is dead
+        if self._verify_cleanup_complete():
+            self.call_later(
+                self.write_log, "[green]All Claude instances terminated. Cleanup complete.[/green]"
+            )
+        else:
+            self.call_later(
+                self.write_log,
+                "[red]WARNING: Some processes may still be running. Check manually.[/red]",
+            )
+
+        # Brief delay to show messages, then exit
+        await asyncio.sleep(0.5)
+        self.call_later(self.exit)
 
     # =========================================================================
     # UI interface - these methods match NonInteractiveUI for compatibility

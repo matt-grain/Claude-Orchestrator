@@ -3,15 +3,156 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
+import logging
+import os
+import signal
 import sys
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TextIO
 
 from debussy.core.models import ComplianceIssue, ExecutionResult, Phase
+
+logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# PID Registry - Global tracking of spawned Claude processes
+# =============================================================================
+# This is the safety net to ensure no Claude processes are left orphaned.
+# It tracks all PIDs spawned by ClaudeRunner and provides cleanup functions.
+
+
+class PIDRegistry:
+    """Global registry of spawned Claude subprocess PIDs.
+
+    This is a safety mechanism to ensure we can always clean up Claude
+    processes, even on unexpected crashes or exits.
+    """
+
+    _instance: PIDRegistry | None = None
+    _pids: set[int]
+    _atexit_registered: bool
+
+    def __new__(cls) -> PIDRegistry:
+        """Singleton pattern for global PID tracking."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._pids = set()
+            cls._instance._atexit_registered = False
+        return cls._instance
+
+    def register(self, pid: int) -> None:
+        """Register a PID as spawned by us."""
+        self._pids.add(pid)
+        self._ensure_atexit_handler()
+        logger.debug(f"PID registry: registered {pid}, active: {self._pids}")
+
+    def unregister(self, pid: int) -> None:
+        """Unregister a PID (process completed normally)."""
+        self._pids.discard(pid)
+        logger.debug(f"PID registry: unregistered {pid}, active: {self._pids}")
+
+    def get_active_pids(self) -> set[int]:
+        """Get all currently registered PIDs."""
+        return self._pids.copy()
+
+    def is_process_alive(self, pid: int) -> bool:
+        """Check if a process is still running."""
+        try:
+            if sys.platform == "win32":
+                # Windows: use tasklist to check
+                import subprocess
+
+                result = subprocess.run(
+                    ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                return str(pid) in result.stdout
+            else:
+                # Unix: send signal 0 to check
+                os.kill(pid, 0)
+                return True
+        except (OSError, ProcessLookupError):
+            return False
+
+    def kill_all(self) -> list[int]:
+        """Kill all registered processes. Returns list of PIDs that were killed."""
+        killed = []
+        for pid in list(self._pids):
+            if self._kill_pid(pid):
+                killed.append(pid)
+            self._pids.discard(pid)
+        return killed
+
+    def verify_all_dead(self) -> list[int]:
+        """Verify all registered PIDs are dead. Returns list of still-alive PIDs."""
+        still_alive = []
+        for pid in list(self._pids):
+            if self.is_process_alive(pid):
+                still_alive.append(pid)
+            else:
+                self._pids.discard(pid)
+        return still_alive
+
+    def _kill_pid(self, pid: int) -> bool:
+        """Kill a single PID. Returns True if killed, False if already dead."""
+        try:
+            if sys.platform == "win32":
+                # Windows: use taskkill for tree kill
+                import subprocess
+
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(pid)],
+                    capture_output=True,
+                    check=False,
+                )
+                return True
+            else:
+                # Unix: try SIGTERM first, then SIGKILL
+                try:
+                    os.killpg(pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    os.kill(pid, signal.SIGTERM)
+
+                # Give it a moment to die gracefully
+                time.sleep(0.5)
+
+                # Force kill if still alive
+                if self.is_process_alive(pid):
+                    with suppress(ProcessLookupError, OSError):
+                        try:
+                            os.killpg(pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            os.kill(pid, signal.SIGKILL)
+                return True
+        except (OSError, ProcessLookupError):
+            return False
+
+    def _ensure_atexit_handler(self) -> None:
+        """Register atexit handler if not already registered."""
+        if not self._atexit_registered:
+            atexit.register(self._atexit_cleanup)
+            self._atexit_registered = True
+
+    def _atexit_cleanup(self) -> None:
+        """Last-resort cleanup on Python exit."""
+        if self._pids:
+            logger.warning(f"atexit: Cleaning up {len(self._pids)} orphaned Claude processes")
+            killed = self.kill_all()
+            if killed:
+                logger.warning(f"atexit: Killed PIDs: {killed}")
+
+
+# Global singleton instance
+pid_registry = PIDRegistry()
 
 OutputMode = Literal["terminal", "file", "both"]
 
@@ -278,6 +419,54 @@ class ClaudeRunner:
             if self.stream_output:
                 self._write_output(f"[ERR] {decoded}")
 
+    async def _kill_process_tree(self, process: asyncio.subprocess.Process) -> None:
+        """Kill process and all its descendants (grandchildren, etc.).
+
+        This is critical for cleanup because Claude may spawn subprocesses
+        (Task tool agents, shell commands) that would otherwise be orphaned.
+        """
+        if process.returncode is not None:
+            return  # Already dead
+
+        pid = process.pid
+        logger.debug(f"Killing process tree for PID {pid}")
+
+        try:
+            if sys.platform == "win32":
+                # Windows: taskkill /T kills the entire process tree
+                import subprocess as sp
+
+                sp.run(
+                    ["taskkill", "/F", "/T", "/PID", str(pid)],
+                    capture_output=True,
+                    check=False,
+                )
+            else:
+                # Unix: try to kill the process group
+                try:
+                    os.killpg(pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    # No process group, kill individual process
+                    os.kill(pid, signal.SIGTERM)
+
+                # Give it time to exit gracefully
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=2.0)
+                except TimeoutError:
+                    # Force kill if still alive
+                    with suppress(ProcessLookupError, OSError):
+                        try:
+                            os.killpg(pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            os.kill(pid, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            # Process already dead or inaccessible
+            pass
+
+        # Final wait to ensure cleanup
+        with suppress(Exception):
+            await process.wait()
+
     async def execute_phase(
         self,
         phase: Phase,
@@ -301,7 +490,17 @@ class ClaudeRunner:
             self._open_log_file(run_id, phase.id)
 
         start_time = time.time()
+        process: asyncio.subprocess.Process | None = None
         try:
+            # On Unix, create new session for process group management
+            create_kwargs: dict = {
+                "stdout": asyncio.subprocess.PIPE,
+                "stderr": asyncio.subprocess.PIPE,
+                "cwd": self.project_root,
+            }
+            if sys.platform != "win32":
+                create_kwargs["start_new_session"] = True
+
             process = await asyncio.create_subprocess_exec(
                 self.claude_command,
                 "--print",
@@ -313,10 +512,12 @@ class ClaudeRunner:
                 self.model,
                 "-p",
                 prompt,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self.project_root,
+                **create_kwargs,
             )
+
+            # Register PID for safety cleanup
+            pid_registry.register(process.pid)
+            logger.debug(f"Started Claude process with PID {process.pid}")
 
             raw_output: list[str] = []
             stderr_lines: list[str] = []
@@ -335,8 +536,9 @@ class ClaudeRunner:
                 )
                 await process.wait()
             except TimeoutError:
-                process.kill()
-                await process.wait()
+                logger.warning(f"Process {process.pid} timed out, killing process tree")
+                await self._kill_process_tree(process)
+                pid_registry.unregister(process.pid)
                 return ExecutionResult(
                     success=False,
                     session_log=f"TIMEOUT after {self.timeout} seconds",
@@ -346,10 +548,14 @@ class ClaudeRunner:
                 )
             except asyncio.CancelledError:
                 # User cancelled (e.g., quit from TUI) - kill subprocess and re-raise
-                process.kill()
-                await process.wait()
+                logger.info(f"Cancellation requested, killing process tree for PID {process.pid}")
+                await self._kill_process_tree(process)
+                pid_registry.unregister(process.pid)
                 self._close_log_file()
                 raise
+
+            # Process completed normally - unregister from safety registry
+            pid_registry.unregister(process.pid)
 
             # Use raw JSON output for session log (compliance checker can parse it)
             session_log = "".join(raw_output)
@@ -378,13 +584,18 @@ class ClaudeRunner:
                 pid=None,
             )
         except Exception as e:
+            # Ensure cleanup even on unexpected exceptions
+            if process is not None and process.returncode is None:
+                logger.warning(f"Exception during execution, cleaning up PID {process.pid}")
+                await self._kill_process_tree(process)
+                pid_registry.unregister(process.pid)
             self._close_log_file()
             return ExecutionResult(
                 success=False,
                 session_log=f"Error spawning Claude: {e}",
                 exit_code=-1,
                 duration_seconds=time.time() - start_time,
-                pid=None,
+                pid=process.pid if process else None,
             )
 
     def _build_phase_prompt(self, phase: Phase) -> str:
