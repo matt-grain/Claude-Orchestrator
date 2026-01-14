@@ -1,8 +1,8 @@
-# Phase 3.3: Convert Command
+# Phase 4: Convert Command
 
 **Status:** Pending
 **Master Plan:** [MASTER_PLAN.md](MASTER_PLAN.md)
-**Depends On:** [Phase 3.1](phase3-1-audit.md) (audit validates output), [Phase 3.2](phase3-2-templates-init.md) (templates as target)
+**Depends On:** [Phase 3](phase-3-audit-improvements.md) (verbose audit, JSON output, suggestions for agent)
 
 ---
 
@@ -18,7 +18,7 @@ Before implementing:
 ---
 
 ## Process Wrapper (MANDATORY)
-- [ ] Read previous notes from Phase 3.1 and 3.2
+- [ ] Read previous notes from Phase 1 and Phase 2
 - [ ] Study Claude runner implementation
 - [ ] **[IMPLEMENTATION - see Tasks below]**
 - [ ] Pre-validation (ALL required):
@@ -56,7 +56,7 @@ Implement `debussy convert <freeform_plan>` command that uses Claude to transfor
 **Key constraint**: The convert output MUST pass `debussy audit`. If it doesn't, the conversion failed.
 
 ## Dependencies
-- Previous phase: Phase 3.1 (audit), Phase 3.2 (templates)
+- Previous phases: Phase 1 (audit), Phase 2 (templates)
 - External: Claude CLI (for agent-powered conversion)
 
 ## Risk Assessment

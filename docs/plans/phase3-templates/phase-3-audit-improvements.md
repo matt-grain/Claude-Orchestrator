@@ -1,8 +1,8 @@
-# Phase 4: Audit Improvements
+# Phase 3: Audit Improvements
 
 **Status:** Pending
 **Master Plan:** [MASTER_PLAN.md](MASTER_PLAN.md)
-**Depends On:** [Phase 1](phase-1-audit.md) (audit command)
+**Depends On:** [Phase 2](phase-2-templates-init.md) (templates exist for testing)
 
 ---
 
