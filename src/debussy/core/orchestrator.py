@@ -58,9 +58,7 @@ class Orchestrator:
             sandbox_mode=self.config.sandbox_mode,
         )
         self.gates = GateRunner(self.project_root)
-        self.checker = ComplianceChecker(
-            self.gates, self.project_root, ltm_enabled=self.config.learnings
-        )
+        self.checker = ComplianceChecker(self.gates, self.project_root, ltm_enabled=self.config.learnings)
 
         # Initialize notifier based on config
         if notifier is None:
@@ -69,9 +67,7 @@ class Orchestrator:
             self.notifier = notifier
 
         # Initialize UI based on config
-        self.ui: TextualUI | NonInteractiveUI = (
-            TextualUI() if self.config.interactive else NonInteractiveUI()
-        )
+        self.ui: TextualUI | NonInteractiveUI = TextualUI() if self.config.interactive else NonInteractiveUI()
 
         # Connect UI to ClaudeRunner for log output routing
         # Always set the callback to route through UI (works for both TUI and NonInteractiveUI)
@@ -202,9 +198,7 @@ class Orchestrator:
             for idx, phase in enumerate(phases_to_run, 1):
                 # Skip phases that were already completed in a previous run
                 if skip_phases and phase.id in skip_phases:
-                    self.ui.log_message(
-                        f"[dim]Skipping completed phase {phase.id}: {phase.title}[/dim]"
-                    )
+                    self.ui.log_message(f"[dim]Skipping completed phase {phase.id}: {phase.title}[/dim]")
                     phase.status = PhaseStatus.COMPLETED  # For dependency checks
                     continue
                 # Check for user actions before each phase
@@ -342,12 +336,7 @@ class Orchestrator:
             )
 
             # Build prompt (normal or remediation)
-            if is_remediation:
-                prompt = self.claude.build_remediation_prompt(
-                    phase, previous_issues, with_ltm=self.config.learnings
-                )
-            else:
-                prompt = None  # Use default prompt
+            prompt = self.claude.build_remediation_prompt(phase, previous_issues, with_ltm=self.config.learnings) if is_remediation else None
 
             # Spawn Claude worker
             result = await self.claude.execute_phase(phase, prompt, run_id=run_id)
@@ -383,9 +372,7 @@ class Orchestrator:
 
             if compliance.passed:
                 self.state.update_phase_status(run_id, phase.id, PhaseStatus.COMPLETED)
-                phase.status = (
-                    PhaseStatus.COMPLETED
-                )  # Update in-memory status for dependency checks
+                phase.status = PhaseStatus.COMPLETED  # Update in-memory status for dependency checks
                 self.notifier.success(
                     f"Phase {phase.id} Completed",
                     "All compliance checks passed",

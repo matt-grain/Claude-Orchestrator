@@ -23,6 +23,7 @@ Add plan validation (`audit`), scaffolding (`init`), and conversion (`convert`) 
 | 1 | [Audit Command](phase-1-audit.md) | Deterministic plan validation | Low | Completed |
 | 2 | [Templates & Init](phase-2-templates-init.md) | Scaffold from templates | Low | Completed |
 | 3 | [Convert Command](phase-3-convert.md) | Agent-powered plan conversion | Medium | Pending |
+| 4 | [Audit Improvements](phase-4-audit-improvements.md) | Verbose output, suggestions, JSON | Low | Pending |
 
 ## Success Metrics
 
