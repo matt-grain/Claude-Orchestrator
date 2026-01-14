@@ -647,27 +647,27 @@ class ClaudeRunner:
             self._display_bash_tool(tool_input)
         elif tool_name in ("Glob", "Grep"):
             pattern = tool_input.get("pattern", "")
-            self._write_output(f"\n[{tool_name}: {pattern}]\n")
+            self._write_output(f"[{tool_name}: {pattern}]\n")
         elif tool_name == "TodoWrite":
             todos = tool_input.get("todos", [])
-            self._write_output(f"\n[TodoWrite: {len(todos)} items]\n")
+            self._write_output(f"[TodoWrite: {len(todos)} items]\n")
         elif tool_name == "Task":
             self._display_task_tool(content)
         else:
-            self._write_output(f"\n[{tool_name}]\n")
+            self._write_output(f"[{tool_name}]\n")
 
     def _display_file_tool(self, tool_name: str, tool_input: dict) -> None:
         """Display Read/Write/Edit tool use."""
         file_path = tool_input.get("file_path", "")
         filename = file_path.split("/")[-1].split("\\")[-1] if file_path else "?"
-        self._write_output(f"\n[{tool_name}: {filename}]\n")
+        self._write_output(f"[{tool_name}: {filename}]\n")
 
     def _display_bash_tool(self, tool_input: dict) -> None:
         """Display Bash tool use with truncated command."""
         command = tool_input.get("command", "")
         if len(command) > 60:
             command = command[:57] + "..."
-        self._write_output(f"\n[Bash: {command}]\n")
+        self._write_output(f"[Bash: {command}]\n")
 
     def _display_task_tool(self, content: dict) -> None:
         """Display Task tool use and track agent change."""
@@ -675,7 +675,7 @@ class ClaudeRunner:
         tool_id = content.get("id", "")
         desc = tool_input.get("description", "")
         subagent_type = tool_input.get("subagent_type", "")
-        self._write_output(f"\n[Task: {desc}]\n")
+        self._write_output(f"[Task: {desc}]\n")
         if subagent_type:
             self._set_active_agent(subagent_type)
             if tool_id:
