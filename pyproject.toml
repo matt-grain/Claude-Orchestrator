@@ -7,7 +7,7 @@ packages = ["src/debussy"]
 
 [project]
 name = "claude-debussy"
-version = "0.3.6"
+version = "0.3.7"
 description = "Orchestrate multi-phase Claude CLI sessions with compliance verification"
 readme = "README.md"
 requires-python = ">=3.13"
