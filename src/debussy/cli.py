@@ -150,9 +150,7 @@ def _check_resumable_run_noninteractive(
         return None
 
     run_id, completed = info
-    console.print(
-        f"[cyan]Resuming run {run_id}: skipping {len(completed)} completed phase(s)[/cyan]"
-    )
+    console.print(f"[cyan]Resuming run {run_id}: skipping {len(completed)} completed phase(s)[/cyan]")
     return completed
 
 
@@ -183,6 +181,10 @@ def run(
     dry_run: Annotated[
         bool,
         typer.Option("--dry-run", "-n", help="Parse and validate only, don't execute"),
+    ] = False,
+    skip_audit: Annotated[
+        bool,
+        typer.Option("--skip-audit", help="Skip pre-flight audit check"),
     ] = False,
     model: Annotated[
         str,
@@ -227,6 +229,22 @@ def run(
     if dry_run:
         _dry_run(master_plan)
         return
+
+    # Pre-flight audit check (unless skipped)
+    if not skip_audit:
+        from debussy.core.auditor import PlanAuditor
+
+        auditor = PlanAuditor()
+        audit_result = auditor.audit(master_plan)
+
+        if not audit_result.passed:
+            console.print("[bold red]Plan failed audit. Fix issues before running.[/bold red]")
+            console.print(f"  Errors: {audit_result.summary.errors}")
+            console.print(f"  Warnings: {audit_result.summary.warnings}")
+            console.print()
+            console.print("[dim]Run 'debussy audit' for details or --skip-audit to bypass.[/dim]")
+            console.print()
+            raise typer.Exit(1)
 
     # Validate mutually exclusive flags
     if resume_run and restart:
@@ -308,12 +326,8 @@ def run(
                 console.print(f"[yellow]Starting from phase: {phase}[/yellow]\n")
 
             # Check for resumable run (--resume flag required in non-interactive)
-            skip_phases = (
-                None if restart else _check_resumable_run_noninteractive(master_plan, resume_run)
-            )
-            run_id = run_orchestration(
-                master_plan, start_phase=phase, skip_phases=skip_phases, config=config
-            )
+            skip_phases = None if restart else _check_resumable_run_noninteractive(master_plan, resume_run)
+            run_id = run_orchestration(master_plan, start_phase=phase, skip_phases=skip_phases, config=config)
             console.print(f"\nOrchestration completed. Run ID: {run_id}")
             if output in ("file", "both"):
                 console.print("[dim]Logs saved to: .debussy/logs/[/dim]")
@@ -378,6 +392,84 @@ def _run_with_tui(
     # Pass the coroutine factory to the TUI and run
     tui._orchestration_coro = run_orchestration_task
     tui.run()
+
+
+@app.command()
+def audit(
+    plan_path: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to master plan",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            resolve_path=True,
+        ),
+    ],
+    strict: Annotated[
+        bool,
+        typer.Option("--strict", help="Fail on warnings too"),
+    ] = False,
+) -> None:
+    """Validate plan structure before running."""
+    from debussy.core.auditor import PlanAuditor
+
+    console.print(f"\n[bold]Auditing:[/bold] {plan_path.name}\n")
+
+    auditor = PlanAuditor()
+    result = auditor.audit(plan_path)
+
+    # Display summary
+    console.print(f"[bold]{result.summary.master_plan}[/bold]")
+    console.print(f"  Phases found: {result.summary.phases_found}")
+    console.print(f"  Phases valid: {result.summary.phases_valid}")
+    console.print(f"  Total gates: {result.summary.gates_total}")
+    console.print()
+
+    # Display issues grouped by severity
+    from debussy.core.audit import AuditSeverity
+
+    errors = [i for i in result.issues if i.severity == AuditSeverity.ERROR]
+    warnings = [i for i in result.issues if i.severity == AuditSeverity.WARNING]
+    infos = [i for i in result.issues if i.severity == AuditSeverity.INFO]
+
+    if errors:
+        console.print("[bold red]Errors:[/bold red]")
+        for issue in errors:
+            location = f" ({issue.location})" if issue.location else ""
+            console.print(f"  [red]✗[/red] {issue.message}{location}")
+        console.print()
+
+    if warnings:
+        console.print("[bold yellow]Warnings:[/bold yellow]")
+        for issue in warnings:
+            location = f" ({issue.location})" if issue.location else ""
+            console.print(f"  [yellow]⚠[/yellow] {issue.message}{location}")
+        console.print()
+
+    if infos:
+        console.print("[bold cyan]Info:[/bold cyan]")
+        for issue in infos:
+            location = f" ({issue.location})" if issue.location else ""
+            console.print(f"  [cyan]i[/cyan] {issue.message}{location}")
+        console.print()
+
+    # Summary
+    err_count = result.summary.errors
+    warn_count = result.summary.warnings
+    console.print(f"[bold]Summary:[/bold] {err_count} error(s), {warn_count} warning(s)")
+
+    if result.passed:
+        console.print("[bold green]Result: PASS ✓[/bold green]\n")
+    else:
+        console.print("[bold red]Result: FAIL ✗[/bold red]")
+        console.print("[dim]Run `debussy convert` to fix issues or edit manually.[/dim]\n")
+        raise typer.Exit(1)
+
+    # In strict mode, fail on warnings too
+    if strict and result.summary.warnings > 0:
+        console.print("[yellow]Strict mode: Failing due to warnings[/yellow]\n")
+        raise typer.Exit(1)
 
 
 @app.command()

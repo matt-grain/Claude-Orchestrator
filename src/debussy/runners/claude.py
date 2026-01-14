@@ -270,6 +270,7 @@ class ClaudeRunner:
         self.output_mode = output_mode
         self.log_dir = log_dir or (project_root / ".debussy" / "logs")
         self._current_log_file: TextIO | None = None
+        self._current_jsonl_file: TextIO | None = None  # Raw JSONL stream for debugging
         self._output_callback = output_callback
         self._token_stats_callback = token_stats_callback
         self._agent_change_callback = agent_change_callback
@@ -378,9 +379,16 @@ class ClaudeRunner:
             self._sandbox_log_file.flush()
 
     def _open_log_file(self, run_id: str, phase_id: str) -> None:
-        """Open a log file for the current phase."""
+        """Open log files for the current phase.
+
+        Creates two files:
+        - run_{run_id}_phase_{phase_id}.log - Human-readable formatted output
+        - run_{run_id}_phase_{phase_id}.jsonl - Raw JSONL stream (for debugging)
+        """
         if self.output_mode in ("file", "both"):
             self.log_dir.mkdir(parents=True, exist_ok=True)
+
+            # Human-readable log
             log_path = self.log_dir / f"run_{run_id}_phase_{phase_id}.log"
             self._current_log_file = log_path.open("w", encoding="utf-8")
             self._current_log_file.write(f"=== Phase {phase_id} Log ===\n")
@@ -388,11 +396,18 @@ class ClaudeRunner:
             self._current_log_file.write(f"Model: {self.model}\n")
             self._current_log_file.write("=" * 40 + "\n\n")
 
+            # Raw JSONL log (for debugging when human-readable is incomplete)
+            jsonl_path = self.log_dir / f"run_{run_id}_phase_{phase_id}.jsonl"
+            self._current_jsonl_file = jsonl_path.open("w", encoding="utf-8")
+
     def _close_log_file(self) -> None:
-        """Close the current log file."""
+        """Close both log files (human-readable and JSONL)."""
         if self._current_log_file:
             self._current_log_file.close()
             self._current_log_file = None
+        if self._current_jsonl_file:
+            self._current_jsonl_file.close()
+            self._current_jsonl_file = None
 
     def _build_claude_command(self, prompt: str) -> list[str]:
         """Build Claude CLI command, optionally wrapped in Docker.
@@ -423,7 +438,6 @@ class ClaudeRunner:
             # Exclude host-specific directories by mounting empty tmpfs over them
             # This prevents Windows .venv, __pycache__, .git from breaking Linux container
             excluded_dirs = [
-                ".venv",
                 ".git",
                 "__pycache__",
                 ".pytest_cache",
@@ -432,6 +446,9 @@ class ClaudeRunner:
             ]
             for excluded in excluded_dirs:
                 volumes.append(f"--mount type=tmpfs,destination=/workspace/{excluded}")
+            # .venv needs exec flag for shared object loading (pydantic-core, tiktoken, etc.)
+            # Must use --tmpfs syntax (not --mount) to enable exec option
+            volumes.extend(["--tmpfs", "/workspace/.venv:exec"])
 
             # Mount Claude credentials for OAuth authentication
             # Note: mounted as rw because Claude writes to debug/, stats-cache.json, etc.
@@ -442,10 +459,7 @@ class ClaudeRunner:
 
             # Build env vars
             # CRITICAL: Set PATH explicitly to prevent host PATH from overriding container.
-            container_path = (
-                "/home/claude/.local/bin:/usr/local/sbin:/usr/local/bin"
-                ":/usr/sbin:/usr/bin:/sbin:/bin"
-            )
+            container_path = "/home/claude/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
             env_vars = [f"-e PATH={container_path}"]
             api_key = os.environ.get("ANTHROPIC_API_KEY", "")
             if api_key:
@@ -490,15 +504,10 @@ class ClaudeRunner:
             return
 
         if not _is_docker_available():
-            raise RuntimeError(
-                "sandbox_mode is 'devcontainer' but Docker is not available.\n"
-                "Install Docker Desktop or set sandbox_mode: none in config."
-            )
+            raise RuntimeError("sandbox_mode is 'devcontainer' but Docker is not available.\nInstall Docker Desktop or set sandbox_mode: none in config.")
 
         if not _is_sandbox_image_available():
-            raise RuntimeError(
-                f"Docker image '{SANDBOX_IMAGE}' not found.\nBuild it with: debussy sandbox build"
-            )
+            raise RuntimeError(f"Docker image '{SANDBOX_IMAGE}' not found.\nBuild it with: debussy sandbox build")
 
     def _build_subprocess_kwargs(self) -> dict:
         """Build kwargs for asyncio.create_subprocess_exec."""
@@ -531,6 +540,11 @@ class ClaudeRunner:
 
             decoded = line.decode("utf-8", errors="replace").strip()
             output_list.append(decoded + "\n")
+
+            # Write raw JSONL to file for debugging (captures everything)
+            if self._current_jsonl_file:
+                self._current_jsonl_file.write(decoded + "\n")
+                self._current_jsonl_file.flush()
 
             if not decoded:
                 continue
@@ -834,7 +848,7 @@ class ClaudeRunner:
         with suppress(Exception):
             await process.wait()
 
-    async def execute_phase(  # noqa: PLR0915
+    async def execute_phase(
         self,
         phase: Phase,
         custom_prompt: str | None = None,
@@ -872,9 +886,7 @@ class ClaudeRunner:
             # Show execution mode in logs
             self._log_execution_mode()
 
-            process = await asyncio.create_subprocess_exec(
-                cmd[0], *cmd[1:], **self._build_subprocess_kwargs()
-            )
+            process = await asyncio.create_subprocess_exec(cmd[0], *cmd[1:], **self._build_subprocess_kwargs())
 
             # Register PID for safety cleanup
             pid_registry.register(process.pid)
@@ -1090,9 +1102,7 @@ Read the phase plan file and follow the Process Wrapper EXACTLY.
         def to_posix(p: Path | None) -> str:
             return str(p).replace("\\", "/") if p else ""
 
-        issues_text = "\n".join(
-            f"- [{issue.severity.upper()}] {issue.type.value}: {issue.details}" for issue in issues
-        )
+        issues_text = "\n".join(f"- [{issue.severity.upper()}] {issue.type.value}: {issue.details}" for issue in issues)
 
         notes_output_str = to_posix(phase.notes_output)
         required_actions: list[str] = []
