@@ -182,6 +182,7 @@ Options:
   --no-auto-commit     Disable auto-commit at phase boundaries
   --allow-dirty        Allow starting with uncommitted changes
   --context-threshold  Context usage % to trigger restart (0-100, default: 80)
+  --tool-call-threshold Fallback: restart after N tool calls (default: 100)
   --max-restarts       Max restart attempts per phase (default: 3, 0 to disable)
 ```
 

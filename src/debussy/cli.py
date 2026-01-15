@@ -252,6 +252,13 @@ def run(
             help="Maximum restart attempts per phase. Set to 0 to disable. Default: 3",
         ),
     ] = None,
+    tool_call_threshold: Annotated[
+        int | None,
+        typer.Option(
+            "--tool-call-threshold",
+            help="Fallback: restart after N tool calls. Default: 100",
+        ),
+    ] = None,
 ) -> None:
     """Start orchestrating a master plan."""
     if dry_run:
@@ -305,6 +312,8 @@ def run(
         config.context_threshold = context_threshold
     if max_restarts is not None:
         config.max_restarts = max_restarts
+    if tool_call_threshold is not None:
+        config.tool_call_threshold = tool_call_threshold
 
     # Security warning for non-sandboxed mode
     if config.sandbox_mode == "none" and not accept_risks:
@@ -1262,16 +1271,21 @@ def init(
         else:
             console.print(f"[yellow]LTM setup warning: {result.stderr.strip()}[/yellow]")
 
-    # Create config with learnings enabled if --with-ltm
-    if with_ltm:
-        from debussy.config import Config
+    # Always create config (with learnings enabled if --with-ltm)
+    from debussy.config import Config
 
-        debussy_dir = target / ".debussy"
-        debussy_dir.mkdir(exist_ok=True)
-        config = Config(learnings=True)
-        config_path = debussy_dir / "config.yaml"
+    debussy_dir = target / ".debussy"
+    debussy_dir.mkdir(exist_ok=True)
+    config_path = debussy_dir / "config.yaml"
+
+    if config_path.exists() and not force:
+        console.print(f"[yellow]Config already exists: {config_path}[/yellow]")
+        console.print("[dim]Use --force to overwrite.[/dim]")
+    else:
+        config = Config(learnings=with_ltm)
         config.save(config_path)
-        console.print(f"[green]Created {config_path} with learnings enabled[/green]")
+        learnings_note = " with learnings enabled" if with_ltm else ""
+        console.print(f"[green]Created {config_path}{learnings_note}[/green]")
 
     console.print("\n[bold]Setup complete![/bold]")
     if with_ltm:
