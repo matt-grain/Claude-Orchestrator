@@ -4,12 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import atexit
-import json
 import logging
 import os
-import platform
-import shlex
-import shutil
 import signal
 import subprocess
 import sys
@@ -21,6 +17,12 @@ from pathlib import Path
 from typing import Literal, TextIO
 
 from debussy.core.models import ComplianceIssue, ExecutionResult, Phase
+from debussy.runners.docker_builder import DockerCommandBuilder
+from debussy.runners.stream_parser import JsonStreamParser, StreamParserCallbacks
+from debussy.utils.docker import (
+    get_docker_command,
+    is_docker_available,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,38 +30,10 @@ logger = logging.getLogger(__name__)
 SANDBOX_IMAGE = "debussy-sandbox:latest"
 
 
-def _get_docker_command() -> list[str]:
-    """Get the docker command prefix, using WSL on Windows if needed."""
-    if shutil.which("docker"):
-        return ["docker"]
-    # On Windows, try docker through WSL
-    if platform.system() == "Windows" and shutil.which("wsl"):
-        return ["wsl", "docker"]
-    return ["docker"]  # Will fail, but gives clear error
-
-
-def _is_docker_available() -> bool:
-    """Check if Docker is installed and the daemon is running."""
-    docker_cmd = _get_docker_command()
-    # If using WSL, we don't need which() check
-    if docker_cmd[0] != "wsl" and not shutil.which("docker"):
-        return False
-    try:
-        result = subprocess.run(
-            [*docker_cmd, "info"],
-            capture_output=True,
-            timeout=10,
-            check=False,
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, OSError):
-        return False
-
-
 def _is_sandbox_image_available() -> bool:
     """Check if the debussy-sandbox Docker image is built."""
     try:
-        docker_cmd = _get_docker_command()
+        docker_cmd = get_docker_command()
         result = subprocess.run(
             [*docker_cmd, "images", "-q", SANDBOX_IMAGE],
             capture_output=True,
@@ -70,25 +44,6 @@ def _is_sandbox_image_available() -> bool:
         return bool(result.stdout.strip())
     except (subprocess.TimeoutExpired, OSError):
         return False
-
-
-def _normalize_path_for_docker(path: Path, use_wsl: bool = False) -> str:
-    """Convert Windows path to Docker-compatible format.
-
-    When use_wsl=False (Docker Desktop native):
-        C:\\Projects\\foo -> /c/Projects/foo
-    When use_wsl=True (Docker via WSL):
-        C:\\Projects\\foo -> /mnt/c/Projects/foo
-    """
-    if platform.system() == "Windows":
-        path_str = str(path.resolve())
-        if len(path_str) >= 2 and path_str[1] == ":":
-            drive = path_str[0].lower()
-            rest = path_str[2:].replace("\\", "/")
-            if use_wsl:
-                return f"/mnt/{drive}{rest}"
-            return f"/{drive}{rest}"
-    return str(path)
 
 
 # =============================================================================
@@ -103,19 +58,14 @@ class PIDRegistry:
 
     This is a safety mechanism to ensure we can always clean up Claude
     processes, even on unexpected crashes or exits.
+
+    Use get_pid_registry() to obtain the singleton instance.
     """
 
-    _instance: PIDRegistry | None = None
-    _pids: set[int]
-    _atexit_registered: bool
-
-    def __new__(cls) -> PIDRegistry:
-        """Singleton pattern for global PID tracking."""
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._pids = set()
-            cls._instance._atexit_registered = False
-        return cls._instance
+    def __init__(self) -> None:
+        """Initialize the registry. Use get_pid_registry() instead."""
+        self._pids: set[int] = set()
+        self._atexit_registered: bool = False
 
     def register(self, pid: int) -> None:
         """Register a PID as spawned by us."""
@@ -221,8 +171,34 @@ class PIDRegistry:
                 logger.warning(f"atexit: Killed PIDs: {killed}")
 
 
-# Global singleton instance
-pid_registry = PIDRegistry()
+# Module-level singleton management
+_pid_registry: PIDRegistry | None = None
+
+
+def get_pid_registry() -> PIDRegistry:
+    """Get the global PID registry singleton.
+
+    This is the preferred way to access the registry.
+    """
+    global _pid_registry  # noqa: PLW0603
+    if _pid_registry is None:
+        _pid_registry = PIDRegistry()
+    return _pid_registry
+
+
+def reset_pid_registry() -> None:
+    """Reset the global PID registry (for testing only).
+
+    WARNING: Only call this in test fixtures, never in production code.
+    """
+    global _pid_registry  # noqa: PLW0603
+    if _pid_registry is not None:
+        _pid_registry._pids.clear()
+    _pid_registry = None
+
+
+# Keep backwards-compatible alias (but prefer get_pid_registry())
+pid_registry = get_pid_registry()
 
 OutputMode = Literal["terminal", "file", "both"]
 
@@ -286,6 +262,53 @@ class ClaudeRunner:
         # Track current phase for completion banner
         self._current_phase_id: str | None = None
         self._phase_start_time: float | None = None
+        # Stream parser for JSON output
+        self._parser: JsonStreamParser | None = None
+
+    def _create_parser(self) -> JsonStreamParser:
+        """Create a configured stream parser for the current session."""
+        return JsonStreamParser(
+            callbacks=StreamParserCallbacks(
+                on_text=self._on_parser_text,
+                on_tool_use=None,  # Tool display is handled internally by parser
+                on_tool_result=None,  # Result display is handled internally by parser
+                on_token_stats=self._token_stats_callback,
+                on_agent_change=self._on_parser_agent_change,
+            ),
+            jsonl_file=self._current_jsonl_file,
+            stream_output=self.stream_output,
+        )
+
+    def _on_parser_text(self, text: str, newline: bool) -> None:
+        """Handle text output from parser."""
+        self._write_output(text, newline=newline)
+
+    def _on_parser_agent_change(self, agent: str) -> None:
+        """Handle agent change from parser."""
+        self._current_agent = agent
+        self._needs_line_prefix = True
+        if self._agent_change_callback:
+            self._agent_change_callback(agent)
+
+    def set_callbacks(
+        self,
+        output: Callable[[str], None] | None = None,
+        token_stats: Callable[[TokenStats], None] | None = None,
+        agent_change: Callable[[str], None] | None = None,
+    ) -> None:
+        """Configure runtime callbacks for UI integration.
+
+        Args:
+            output: Called with each line of Claude output
+            token_stats: Called with token usage statistics
+            agent_change: Called when active agent changes (Task tool)
+        """
+        if output is not None:
+            self._output_callback = output
+        if token_stats is not None:
+            self._token_stats_callback = token_stats
+        if agent_change is not None:
+            self._agent_change_callback = agent_change
 
     def _open_sandbox_log(self) -> None:
         """Open temp file for sandbox output buffering (Windows workaround)."""
@@ -451,88 +474,24 @@ class ClaudeRunner:
 
         Returns the command list ready for asyncio.create_subprocess_exec().
         """
-        base_args = [
-            "--print",
-            "--verbose",
-            "--output-format",
-            "stream-json",
-            "--dangerously-skip-permissions",
-            "--model",
-            self.model,
-        ]
-
         if self._sandbox_mode == "devcontainer":
-            # Run Claude inside Docker container
-            # On Windows with Git Bash, we must wrap the entire docker command in 'wsl -e sh -c'
-            # to prevent MSYS path conversion from mangling Linux paths like /home/claude
-            docker_cmd = _get_docker_command()
-            use_wsl = docker_cmd[0] == "wsl"
-            project_path = _normalize_path_for_docker(self.project_root, use_wsl=use_wsl)
-
-            # Build volume mounts (no // prefix needed when using sh -c wrapper)
-            volumes = ["-v", f"{project_path}:/workspace:rw"]
-
-            # Exclude host-specific directories by mounting empty tmpfs over them
-            # This prevents Windows .venv, __pycache__, .git from breaking Linux container
-            excluded_dirs = [
-                ".git",
-                "__pycache__",
-                ".pytest_cache",
-                ".mypy_cache",
-                ".ruff_cache",
-            ]
-            for excluded in excluded_dirs:
-                volumes.append(f"--mount type=tmpfs,destination=/workspace/{excluded}")
-            # .venv needs exec flag for shared object loading (pydantic-core, tiktoken, etc.)
-            # Must use --tmpfs syntax (not --mount) to enable exec option
-            volumes.extend(["--tmpfs", "/workspace/.venv:exec"])
-
-            # Mount Claude credentials for OAuth authentication
-            # Note: mounted as rw because Claude writes to debug/, stats-cache.json, etc.
-            claude_config_dir = Path.home() / ".claude"
-            if claude_config_dir.exists():
-                claude_config_path = _normalize_path_for_docker(claude_config_dir, use_wsl=use_wsl)
-                volumes.append(f"-v {claude_config_path}:/home/claude/.claude:rw")
-
-            # Build env vars
-            # CRITICAL: Set PATH explicitly to prevent host PATH from overriding container.
-            container_path = "/home/claude/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-            env_vars = [f"-e PATH={container_path}"]
-            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-            if api_key:
-                env_vars.append(f"-e ANTHROPIC_API_KEY={api_key}")
-
-            # Build the full docker command as a shell string
-            # This prevents Git Bash from mangling paths when passed through WSL
-            # CRITICAL: The prompt must be shell-quoted as it contains spaces, newlines, etc.
-            quoted_prompt = shlex.quote(prompt)
-            docker_args = [
-                "docker run",
-                "--rm",  # Remove container after exit
-                # Attach to stdout/stderr to capture output (but NOT stdin to avoid hangs)
-                "--attach=stdout",
-                "--attach=stderr",
-                *volumes,
-                "-w /workspace",
-                *env_vars,
-                "--cap-add=NET_ADMIN",
-                "--cap-add=NET_RAW",
-                SANDBOX_IMAGE,
-                *base_args,
-                "-p",
-                quoted_prompt,
-            ]
-            docker_command_str = " ".join(docker_args)
-
-            if use_wsl:
-                # Wrap in 'wsl -e sh -c' to avoid Git Bash path mangling
-                # Use 'exec' to replace shell with docker so we properly wait for it
-                return ["wsl", "-e", "sh", "-c", f"exec {docker_command_str}"]
-            else:
-                # Direct docker execution (non-Windows or native Docker)
-                return ["sh", "-c", f"exec {docker_command_str}"]
+            # Use DockerCommandBuilder for sandbox mode
+            builder = DockerCommandBuilder(
+                project_root=self.project_root,
+                model=self.model,
+            )
+            return builder.build_command(prompt)
         else:
             # Direct execution (no sandbox) - prompt passed directly, no shell quoting
+            base_args = [
+                "--print",
+                "--verbose",
+                "--output-format",
+                "stream-json",
+                "--dangerously-skip-permissions",
+                "--model",
+                self.model,
+            ]
             return [self.claude_command, *base_args, "-p", prompt]
 
     def validate_sandbox_mode(self) -> None:
@@ -540,7 +499,7 @@ class ClaudeRunner:
         if self._sandbox_mode != "devcontainer":
             return
 
-        if not _is_docker_available():
+        if not is_docker_available():
             raise RuntimeError("sandbox_mode is 'devcontainer' but Docker is not available.\nInstall Docker Desktop or set sandbox_mode: none in config.")
 
         if not _is_sandbox_image_available():
@@ -572,7 +531,8 @@ class ClaudeRunner:
 
         Returns the full text content for the session log.
         """
-        full_text: list[str] = []
+        # Create parser for this session
+        self._parser = self._create_parser()
 
         while True:
             line = await stream.readline()
@@ -582,24 +542,13 @@ class ClaudeRunner:
             decoded = line.decode("utf-8", errors="replace").strip()
             output_list.append(decoded + "\n")
 
-            # Write raw JSONL to file for debugging (captures everything)
-            if self._current_jsonl_file:
-                self._current_jsonl_file.write(decoded + "\n")
-                self._current_jsonl_file.flush()
-
             if not decoded:
                 continue
 
-            try:
-                event = json.loads(decoded)
-                self._display_stream_event(event, full_text)
-            except json.JSONDecodeError:
-                # Not JSON, just print as-is
-                if self.stream_output:
-                    self._write_output(decoded, newline=True)
-                full_text.append(decoded)
+            # Parser handles JSON parsing and emits callbacks
+            self._parser.parse_line(decoded)
 
-        return "\n".join(full_text)
+        return self._parser.get_full_text()
 
     def _display_stream_event(self, event: dict, full_text: list[str]) -> None:
         """Display a streaming event and collect text content."""
@@ -937,8 +886,8 @@ class ClaudeRunner:
             stderr_lines: list[str] = []
 
             try:
-                assert process.stdout is not None
-                assert process.stderr is not None
+                if process.stdout is None or process.stderr is None:
+                    raise RuntimeError("Subprocess streams not initialized. This is a bug - please report it.")
 
                 # Stream stdout (JSON) and stderr concurrently
                 await asyncio.wait_for(

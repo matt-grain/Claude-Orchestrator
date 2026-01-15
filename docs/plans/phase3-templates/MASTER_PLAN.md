@@ -24,6 +24,7 @@ Add plan validation (`audit`), scaffolding (`init`), and conversion (`convert`) 
 | 2 | [Templates & Init](phase-2-templates-init.md) | Scaffold from templates | Low | Completed |
 | 3 | [Audit Improvements](phase-3-audit-improvements.md) | Verbose output, suggestions, JSON | Low | Completed |
 | 4 | [Convert Command](phase-4-convert.md) | Agent-powered plan conversion | Medium | Pending |
+| 5 | [ClaudeRunner Refactor](phase-5-claude-runner-refactor.md) | Extract god class components | Medium | Pending |
 
 ## Success Metrics
 
@@ -38,12 +39,16 @@ Add plan validation (`audit`), scaffolding (`init`), and conversion (`convert`) 
 ```
 Phase 1 ──► Phase 2 ──► Phase 3 ──► Phase 4
 (Audit)    (Init)    (Audit++)   (Convert)
+
+Phase 5 (independent)
+(Refactor)
 ```
 
 - Phase 1 (Audit): Independent, can be deployed alone
 - Phase 2 (Templates + Init): Independent of audit, but audit validates output
 - Phase 3 (Audit Improvements): Enhances audit with verbose output, suggestions, JSON
 - Phase 4 (Convert): Requires Phase 3's JSON output and suggestions for agent guidance
+- Phase 5 (ClaudeRunner Refactor): Independent refactoring, can run anytime
 
 ## Risk Assessment
 

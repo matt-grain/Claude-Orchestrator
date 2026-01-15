@@ -29,6 +29,7 @@ from debussy.core.orchestrator import run_orchestration
 from debussy.core.state import StateManager
 from debussy.parsers.master import parse_master_plan
 from debussy.ui.controller import OrchestrationController
+from debussy.utils.docker import get_docker_command, wsl_path
 
 __version__ = "0.1.1"
 
@@ -257,6 +258,9 @@ def run(
     config = Config.load()  # Load from .debussy/config.yaml if exists
     # Apply CLI overrides (only model, output, interactive are typically overridden)
     config.model = model
+    # In non-interactive mode, default to file output (logs are essential for CI/automation)
+    if not interactive and output == "terminal":
+        output = "file"
     config.output = output  # type: ignore[assignment]
     config.interactive = interactive
     # Only override learnings if explicitly set via CLI flag
@@ -1226,34 +1230,6 @@ def _get_docker_dir() -> Path:
     return pkg_docker
 
 
-def _get_docker_command() -> list[str]:
-    """Get the docker command prefix, using WSL on Windows if needed."""
-    import platform
-    import shutil
-
-    if shutil.which("docker"):
-        return ["docker"]
-    # On Windows, try docker through WSL
-    if platform.system() == "Windows" and shutil.which("wsl"):
-        return ["wsl", "docker"]
-    return ["docker"]  # Will fail, but gives clear error
-
-
-def _wsl_path(path: Path) -> str:
-    """Convert Windows path to WSL path format."""
-    import platform
-
-    if platform.system() != "Windows":
-        return str(path)
-    # C:\foo\bar -> /mnt/c/foo/bar
-    path_str = str(path.resolve())
-    if len(path_str) >= 2 and path_str[1] == ":":
-        drive = path_str[0].lower()
-        rest = path_str[2:].replace("\\", "/")
-        return f"/mnt/{drive}{rest}"
-    return str(path)
-
-
 @app.command("sandbox-build")
 def sandbox_build(
     no_cache: Annotated[
@@ -1280,11 +1256,11 @@ def sandbox_build(
         console.print("  [dim]--no-cache: rebuilding all layers[/dim]")
     console.print()
 
-    docker_cmd = _get_docker_command()
+    docker_cmd = get_docker_command()
     # If using WSL, convert paths
     if docker_cmd[0] == "wsl":
-        dockerfile_path = _wsl_path(dockerfile)
-        context_path = _wsl_path(docker_dir)
+        dockerfile_path = wsl_path(dockerfile)
+        context_path = wsl_path(docker_dir)
     else:
         dockerfile_path = str(dockerfile)
         context_path = str(docker_dir)
@@ -1316,14 +1292,14 @@ def sandbox_status() -> None:
     """Check Docker and sandbox image availability."""
     from debussy.runners.claude import (
         SANDBOX_IMAGE,
-        _is_docker_available,
         _is_sandbox_image_available,
     )
+    from debussy.utils.docker import is_docker_available
 
     console.print("[bold]Sandbox Status[/bold]\n")
 
     # Check Docker
-    if _is_docker_available():
+    if is_docker_available():
         console.print("[green]Docker:[/green] Available")
     else:
         console.print("[red]Docker:[/red] Not available")

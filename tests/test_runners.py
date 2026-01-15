@@ -1075,9 +1075,7 @@ class TestClaudeRunnerStreamEvents:
         runner = ClaudeRunner(temp_dir, stream_output=True)
         event = {
             "type": "assistant",
-            "message": {
-                "content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "x.py"}}]
-            },
+            "message": {"content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "x.py"}}]},
         }
         full_text: list[str] = []
 
@@ -1332,9 +1330,7 @@ class TestSubagentLogCapture:
         runner._pending_task_ids["toolu_custom"] = "file-existence-checker"
 
         # Custom agents return content as STRING, not list
-        custom_content = (
-            "## File Existence Check\n| File | Status |\n| calc.py | EXISTS |\n## Verdict\nAPPROVED"
-        )
+        custom_content = "## File Existence Check\n| File | Status |\n| calc.py | EXISTS |\n## Verdict\nAPPROVED"
         content = {
             "tool_use_id": "toolu_custom",
             "content": custom_content,

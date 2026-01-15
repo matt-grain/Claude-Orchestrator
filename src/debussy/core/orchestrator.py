@@ -24,7 +24,7 @@ from debussy.parsers.master import parse_master_plan
 from debussy.parsers.phase import parse_phase
 from debussy.runners.claude import ClaudeRunner, TokenStats
 from debussy.runners.gates import GateRunner
-from debussy.ui import NonInteractiveUI, TextualUI, UIState, UserAction
+from debussy.ui import NonInteractiveUI, OrchestratorUI, TextualUI, UIState, UserAction
 
 if TYPE_CHECKING:
     from debussy.core.models import ComplianceIssue
@@ -67,33 +67,31 @@ class Orchestrator:
             self.notifier = notifier
 
         # Initialize UI based on config
-        self.ui: TextualUI | NonInteractiveUI = TextualUI() if self.config.interactive else NonInteractiveUI()
+        self.ui: OrchestratorUI = TextualUI() if self.config.interactive else NonInteractiveUI()
 
         # Connect UI to ClaudeRunner for log output routing
-        # Always set the callback to route through UI (works for both TUI and NonInteractiveUI)
-        self.claude._output_callback = self.ui.log
-        if self.config.interactive:
-            self.claude._token_stats_callback = self._on_token_stats
-            self.claude._agent_change_callback = self._on_agent_change
+        self.claude.set_callbacks(
+            output=self.ui.log,
+            token_stats=self._on_token_stats if self.config.interactive else None,
+            agent_change=self._on_agent_change if self.config.interactive else None,
+        )
 
         # Parse master plan
         self.plan: MasterPlan | None = None
 
     def _on_token_stats(self, stats: TokenStats) -> None:
         """Handle token stats from Claude runner."""
-        if hasattr(self.ui, "update_token_stats"):
-            self.ui.update_token_stats(
-                input_tokens=stats.input_tokens,
-                output_tokens=stats.output_tokens,
-                cost_usd=stats.cost_usd,
-                context_tokens=stats.context_tokens,
-                context_window=stats.context_window,
-            )
+        self.ui.update_token_stats(
+            input_tokens=stats.input_tokens,
+            output_tokens=stats.output_tokens,
+            cost_usd=stats.cost_usd,
+            context_tokens=stats.context_tokens,
+            context_window=stats.context_window,
+        )
 
     def _on_agent_change(self, agent: str) -> None:
         """Handle agent change from Claude runner."""
-        if hasattr(self.ui, "set_active_agent"):
-            self.ui.set_active_agent(agent)
+        self.ui.set_active_agent(agent)
 
     def _create_notifier(self) -> Notifier:
         """Create notifier based on configuration."""
@@ -182,8 +180,7 @@ class Orchestrator:
         self.ui.start(self.plan.name, len(self.plan.phases))
 
         # Set model name for HUD display
-        if hasattr(self.ui, "set_model"):
-            self.ui.set_model(self.config.model)
+        self.ui.set_model(self.config.model)
 
         try:
             phases_to_run = self.plan.phases
@@ -198,12 +195,12 @@ class Orchestrator:
             for idx, phase in enumerate(phases_to_run, 1):
                 # Skip phases already marked completed in the plan file
                 if phase.status == PhaseStatus.COMPLETED:
-                    self.ui.log_message(f"[dim]Skipping phase {phase.id}: already marked completed in plan[/dim]")
+                    self.ui.log_raw(f"[dim]Skipping phase {phase.id}: already marked completed in plan[/dim]")
                     continue
 
                 # Skip phases that were already completed in a previous run
                 if skip_phases and phase.id in skip_phases:
-                    self.ui.log_message(f"[dim]Skipping completed phase {phase.id}: {phase.title}[/dim]")
+                    self.ui.log_raw(f"[dim]Skipping completed phase {phase.id}: {phase.title}[/dim]")
                     phase.status = PhaseStatus.COMPLETED  # For dependency checks
                     continue
                 # Check for user actions before each phase
@@ -216,7 +213,7 @@ class Orchestrator:
                         "Dependencies not met",
                     )
                     msg = f"[dim]Phase {phase.id} skipped: dependencies not met[/dim]"
-                    self.ui.log_message(msg)
+                    self.ui.log_raw(msg)
                     continue
 
                 # Update UI for new phase

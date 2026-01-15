@@ -106,10 +106,10 @@ class NonInteractiveUI:
             self.context.total_output_tokens += output_tokens
             self.context.total_cost_usd += cost_usd
 
-    def set_active_agent(self, _agent: str) -> None:
+    def set_active_agent(self, agent: str) -> None:
         """Update active agent (no-op for non-interactive)."""
         pass
 
-    def set_model(self, _model: str) -> None:
+    def set_model(self, model: str) -> None:
         """Update model name (no-op for non-interactive)."""
         pass
