@@ -806,6 +806,60 @@ def convert(
 
     if result.success:
         console.print(f"\n[bold green]Conversion complete![/bold green] (attempt {result.iterations}/{max_retries})\n")
+
+        # Run quality check if we have source directory
+        from debussy.converters.quality import ConversionQualityEvaluator
+
+        evaluator = ConversionQualityEvaluator(
+            source_dir=source.parent,
+            output_dir=output,
+        )
+        quality = evaluator.evaluate(audit_result=None)
+
+        # Check for critical quality issues
+        quality_issues = []
+        if quality.agents_lost:
+            quality_issues.append(f"Lost subagents: {', '.join(sorted(quality.agents_lost))}")
+        if quality.tech_lost and len(quality.tech_lost) > 2:
+            quality_issues.append(f"Lost tech keywords: {', '.join(sorted(quality.tech_lost))}")
+        if quality.preprocessed_jaccard < 0.25:
+            quality_issues.append(f"Low content similarity: {quality.preprocessed_jaccard:.0%}")
+
+        if quality_issues and model == "haiku":
+            console.print("[yellow]⚠ Quality issues detected:[/yellow]")
+            for issue in quality_issues:
+                console.print(f"  • {issue}")
+            console.print()
+
+            # Offer upgrade to sonnet
+            if typer.confirm(
+                "Retry with Sonnet model for better quality? (more expensive, slower)",
+                default=False,
+            ):
+                console.print("\n[cyan]Retrying with Sonnet (this may take a few minutes)...[/cyan]\n")
+                # Sonnet needs more time for complex plans
+                sonnet_timeout = max(timeout, 600)  # At least 10 minutes for sonnet
+                converter_sonnet = PlanConverter(
+                    auditor=auditor,
+                    templates_dir=TEMPLATES_DIR,
+                    max_iterations=max_retries,
+                    model="sonnet",
+                    timeout=sonnet_timeout,
+                )
+                result = converter_sonnet.convert(
+                    source_plan=source,
+                    output_dir=output,
+                    interactive=interactive,
+                )
+                if result.success:
+                    console.print("[green]✓ Sonnet conversion complete![/green]\n")
+                else:
+                    console.print("[red]✗ Sonnet conversion also failed[/red]")
+                    console.print("[dim]Consider splitting your plan into smaller parts[/dim]\n")
+                    raise typer.Exit(1)
+            else:
+                console.print("[dim]Tip: Use --model sonnet for complex plans, or split into smaller files[/dim]\n")
+
         console.print("[bold]Next steps:[/bold]")
         master_plan = output / "MASTER_PLAN.md"
         try:
