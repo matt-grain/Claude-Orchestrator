@@ -216,6 +216,21 @@ class Orchestrator:
         self.ui.set_model(self.config.model)
 
         try:
+            # Build effective skip_phases by checking state.db (source of truth)
+            # This ensures we skip completed phases even without --resume flag
+            effective_skip_phases = set(skip_phases) if skip_phases else set()
+
+            # Check state.db for any completed phases from previous runs of this plan
+            existing_run = self.state.find_resumable_run(self.master_plan_path)
+            if existing_run:
+                db_completed = self.state.get_completed_phases(existing_run.id)
+                if db_completed:
+                    # Merge with any explicitly passed skip_phases
+                    newly_skipped = db_completed - effective_skip_phases
+                    if newly_skipped:
+                        self.ui.log_raw(f"[dim]Found {len(newly_skipped)} completed phase(s) in state.db[/dim]")
+                    effective_skip_phases.update(db_completed)
+
             phases_to_run = self.plan.phases
             if start_phase:
                 # Find starting phase and run from there
@@ -226,15 +241,16 @@ class Orchestrator:
                 phases_to_run = phases_to_run[start_idx:]
 
             for idx, phase in enumerate(phases_to_run, 1):
-                # Skip phases already marked completed in the plan file
-                if phase.status == PhaseStatus.COMPLETED:
-                    self.ui.log_raw(f"[dim]Skipping phase {phase.id}: already marked completed in plan[/dim]")
-                    continue
-
-                # Skip phases that were already completed in a previous run
-                if skip_phases and phase.id in skip_phases:
+                # Skip phases that were completed in a previous run (state.db is source of truth)
+                if phase.id in effective_skip_phases:
                     self.ui.log_raw(f"[dim]Skipping completed phase {phase.id}: {phase.title}[/dim]")
                     phase.status = PhaseStatus.COMPLETED  # For dependency checks
+                    continue
+
+                # Fallback: also skip if markdown status says COMPLETED
+                # (for manually edited plans where user marked phases done)
+                if phase.status == PhaseStatus.COMPLETED:
+                    self.ui.log_raw(f"[dim]Skipping phase {phase.id}: marked completed in plan file[/dim]")
                     continue
                 # Check for user actions before each phase
                 if await self._handle_user_action(run_id, phase):

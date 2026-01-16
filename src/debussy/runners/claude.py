@@ -459,6 +459,9 @@ class ClaudeRunner:
         Creates two files:
         - run_{run_id}_phase_{phase_id}.log - Human-readable formatted output
         - run_{run_id}_phase_{phase_id}.jsonl - Raw JSONL stream (for debugging)
+
+        If files already exist (from a previous attempt), appends with a separator
+        to preserve logs from all attempts.
         """
         # Track phase info for completion banner
         self._current_phase_id = phase_id
@@ -469,15 +472,28 @@ class ClaudeRunner:
 
             # Human-readable log
             log_path = self.log_dir / f"run_{run_id}_phase_{phase_id}.log"
-            self._current_log_file = log_path.open("w", encoding="utf-8")
+            is_retry = log_path.exists()
+
+            # Use append mode if file exists (preserves logs from previous attempts)
+            mode = "a" if is_retry else "w"
+            self._current_log_file = log_path.open(mode, encoding="utf-8")
+
+            if is_retry:
+                # Add separator for retry attempt
+                self._current_log_file.write("\n" + "=" * 60 + "\n")
+                self._current_log_file.write("=== RETRY ATTEMPT ===\n")
+                self._current_log_file.write("=" * 60 + "\n\n")
+
             self._current_log_file.write(f"=== Phase {phase_id} Log ===\n")
             self._current_log_file.write(f"Run ID: {run_id}\n")
             self._current_log_file.write(f"Model: {self.model}\n")
             self._current_log_file.write("=" * 40 + "\n\n")
 
             # Raw JSONL log (for debugging when human-readable is incomplete)
+            # Always append for JSONL to preserve all event data
             jsonl_path = self.log_dir / f"run_{run_id}_phase_{phase_id}.jsonl"
-            self._current_jsonl_file = jsonl_path.open("w", encoding="utf-8")
+            jsonl_mode = "a" if jsonl_path.exists() else "w"
+            self._current_jsonl_file = jsonl_path.open(jsonl_mode, encoding="utf-8")
 
     def _write_completion_banner(self, success: bool, duration: float | None = None) -> None:
         """Write phase completion banner to log file."""

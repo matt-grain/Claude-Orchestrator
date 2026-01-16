@@ -108,7 +108,7 @@ wheels = [
 
 [[package]]
 name = "claude-debussy"
-version = "0.3.17"
+version = "0.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },

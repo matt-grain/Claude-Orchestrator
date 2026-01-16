@@ -103,20 +103,47 @@ def _parse_status_field(content: str) -> PhaseStatus:
 
 
 def _parse_dependencies(content: str) -> list[str]:
-    """Extract phase dependencies."""
+    """Extract phase dependencies.
+
+    Only matches explicit dependency declarations, not casual mentions of "Phase X".
+    Valid patterns:
+    - **Depends On:** Phase 1, Phase 2
+    - **Depends On:** Phase 1 (description)
+    - Previous phase: Phase 1
+    - Depends on Phase 1
+    """
     deps: list[str] = []
 
-    # Look for "Depends On:" field with phase links
-    # Phase IDs can be integers (1, 2, 3) or decimals (3.1, 3.2)
-    dep_match = re.search(r"\*\*Depends On:\*\*\s*\[?Phase\s+(\d+(?:\.\d+)?)\]?", content)
-    if dep_match:
-        deps.append(dep_match.group(1))
+    # Look for "Depends On:" field in header (most reliable)
+    # Matches: **Depends On:** Phase 1, Phase 2, Phase 3
+    # Also handles: **Depends On:** Phase 1 (description), Phase 2 (description)
+    dep_header = re.search(r"\*\*Depends On:\*\*\s*(.+?)(?:\n|$)", content)
+    if dep_header:
+        dep_line = dep_header.group(1).strip()
+        # Skip if explicitly no dependencies (N/A, None, etc.)
+        if not dep_line.lower().startswith(("n/a", "none", "-", "no ")):
+            # Find all Phase references in the Depends On line (may have multiple)
+            phase_refs = re.findall(r"Phase\s+(\d+(?:\.\d+)?)", dep_line)
+            deps.extend(phase_refs)
 
-    # Also check dependency section
+    # Check dependency section for explicit dependency declarations only
     dep_section = re.search(r"## Dependencies\s*\n(.*?)(?=\n##|\Z)", content, re.DOTALL | re.IGNORECASE)
     if dep_section:
-        phase_refs = re.findall(r"Phase\s+(\d+(?:\.\d+)?)", dep_section.group(1))
-        deps.extend(phase_refs)
+        section_content = dep_section.group(1)
+        # Only match lines that explicitly declare a dependency:
+        # - Previous phase: Phase X
+        # - Depends on: Phase X
+        # - Requires: Phase X
+        # NOT casual mentions like "used by Phase X" or "output for Phase X"
+        explicit_dep_patterns = [
+            r"Previous phase:\s*Phase\s+(\d+(?:\.\d+)?)",
+            r"Depends on:\s*Phase\s+(\d+(?:\.\d+)?)",
+            r"Requires:\s*Phase\s+(\d+(?:\.\d+)?)",
+            r"^[-*]\s*Phase\s+(\d+(?:\.\d+)?)",  # Bullet point starting with Phase
+        ]
+        for pattern in explicit_dep_patterns:
+            matches = re.findall(pattern, section_content, re.MULTILINE | re.IGNORECASE)
+            deps.extend(matches)
 
     return list(set(deps))  # Deduplicate
 
