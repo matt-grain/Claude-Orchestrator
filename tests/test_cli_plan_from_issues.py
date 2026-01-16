@@ -520,6 +520,8 @@ class TestCLIIntegration:
 
     def test_cli_help(self) -> None:
         """Test that CLI shows help for plan-from-issues command."""
+        import re
+
         from typer.testing import CliRunner
 
         from debussy.cli import app
@@ -527,11 +529,14 @@ class TestCLIIntegration:
         runner = CliRunner()
         result = runner.invoke(app, ["plan-from-issues", "--help"])
 
+        # Strip ANSI codes for reliable string matching
+        output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+
         assert result.exit_code == 0
-        assert "plan-from-issues" in result.output.lower() or "issues" in result.output.lower()
-        assert "--source" in result.output
-        assert "--milestone" in result.output
-        assert "--label" in result.output
+        assert "plan-from-issues" in output.lower() or "issues" in output.lower()
+        assert "--source" in output
+        assert "--milestone" in output
+        assert "--label" in output
 
     def test_cli_invalid_source(self) -> None:
         """Test CLI rejects invalid source."""
