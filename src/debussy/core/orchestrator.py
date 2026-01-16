@@ -33,6 +33,7 @@ from debussy.ui import NonInteractiveUI, OrchestratorUI, TextualUI, UIState, Use
 
 if TYPE_CHECKING:
     from debussy.core.models import ComplianceIssue
+    from debussy.sync.github_sync import GitHubSyncCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,9 @@ class Orchestrator:
 
         # Parse master plan
         self.plan: MasterPlan | None = None
+
+        # GitHub sync coordinator (initialized in load_plan if enabled)
+        self._github_sync: GitHubSyncCoordinator | None = None
 
     def _on_token_stats(self, stats: TokenStats) -> None:
         """Handle token stats from Claude runner."""
@@ -184,6 +188,78 @@ class Orchestrator:
 
         return self.plan
 
+    async def _init_github_sync(self) -> None:
+        """Initialize GitHub sync if enabled and plan has linked issues."""
+        if not self.config.github.enabled:
+            return
+
+        if self.plan is None or not self.plan.github_issues:
+            logger.debug("GitHub sync enabled but no issues linked in plan")
+            return
+
+        # Get repo from plan or detect from git remote
+        repo = self.plan.github_repo
+        if not repo:
+            repo = self._detect_github_repo()
+
+        if not repo:
+            logger.warning("GitHub sync enabled but no repo specified/detected")
+            return
+
+        try:
+            from debussy.sync.github_sync import GitHubSyncCoordinator
+
+            self._github_sync = GitHubSyncCoordinator(
+                repo=repo,
+                config=self.config.github,
+            )
+            await self._github_sync.__aenter__()
+
+            # Initialize from plan metadata
+            valid_issues = await self._github_sync.initialize_from_plan(self.plan.github_issues)
+
+            if valid_issues:
+                self.ui.log_raw(f"[dim]GitHub sync: {len(valid_issues)} issue(s) linked[/dim]")
+            else:
+                logger.warning("No valid GitHub issues found from plan metadata")
+
+        except Exception as e:
+            logger.warning(f"Failed to initialize GitHub sync: {e}")
+            self._github_sync = None
+
+    def _detect_github_repo(self) -> str | None:
+        """Detect GitHub repo from git remote."""
+        try:
+            result = subprocess.run(
+                ["git", "remote", "get-url", "origin"],
+                capture_output=True,
+                text=True,
+                cwd=self.project_root,
+                timeout=5,
+                check=False,
+            )
+            if result.returncode != 0:
+                return None
+
+            url = result.stdout.strip()
+            # Parse git@github.com:owner/repo.git or https://github.com/owner/repo.git
+            import re
+
+            match = re.search(r"github\.com[:/]([^/]+)/([^/.]+)", url)
+            if match:
+                return f"{match.group(1)}/{match.group(2)}"
+
+        except Exception:
+            pass
+
+        return None
+
+    async def _cleanup_github_sync(self) -> None:
+        """Clean up GitHub sync coordinator."""
+        if self._github_sync:
+            await self._github_sync.__aexit__(None, None, None)
+            self._github_sync = None
+
     async def run(
         self,
         start_phase: str | None = None,
@@ -214,6 +290,9 @@ class Orchestrator:
 
         # Set model name for HUD display
         self.ui.set_model(self.config.model)
+
+        # Initialize GitHub sync if enabled
+        await self._init_github_sync()
 
         try:
             # Build effective skip_phases by checking state.db (source of truth)
@@ -283,6 +362,13 @@ class Orchestrator:
                 "All phases completed successfully",
             )
 
+            # GitHub sync: auto-close issues if enabled
+            if self._github_sync:
+                try:
+                    await self._github_sync.on_plan_complete()
+                except Exception as e:
+                    logger.warning(f"GitHub sync plan complete failed: {e}")
+
         except KeyboardInterrupt:
             self.state.update_run_status(run_id, RunStatus.PAUSED)
             self.notifier.warning("Orchestration Paused", "Interrupted by user")
@@ -292,6 +378,8 @@ class Orchestrator:
             self.notifier.error("Orchestration Failed", str(e))
             raise
         finally:
+            # Cleanup GitHub sync
+            await self._cleanup_github_sync()
             self.ui.stop()
 
         return run_id
@@ -485,6 +573,16 @@ class Orchestrator:
         # Start checkpoint for this phase
         self.checkpoint_manager.start_phase(phase.id, phase.title)
 
+        # GitHub sync: phase start
+        if self._github_sync:
+            try:
+                results = await self._github_sync.on_phase_start(phase)
+                for r in results:
+                    if r.success:
+                        self.ui.log_raw(f"[dim]GitHub: {r.message}[/dim]")
+            except Exception as e:
+                logger.warning(f"GitHub sync phase start failed: {e}")
+
         for attempt in range(1, max_attempts + 1):
             # Create execution record
             self.state.create_phase_execution(run_id, phase.id, attempt)
@@ -537,6 +635,8 @@ class Orchestrator:
                     f"Phase {phase.id} Completed",
                     "All compliance checks passed",
                 )
+                # GitHub sync: phase complete
+                await self._github_sync_phase_complete(phase)
                 # Save learnings to LTM if enabled
                 if self.config.learnings:
                     self._save_learnings_to_ltm(phase)
@@ -556,6 +656,8 @@ class Orchestrator:
                     )
                     self.state.update_phase_status(run_id, phase.id, PhaseStatus.COMPLETED)
                     phase.status = PhaseStatus.COMPLETED  # Update in-memory status
+                    # GitHub sync: phase complete (even with warnings)
+                    await self._github_sync_phase_complete(phase)
                     # Save learnings to LTM if enabled (even with warnings)
                     if self.config.learnings:
                         self._save_learnings_to_ltm(phase)
@@ -598,9 +700,45 @@ class Orchestrator:
             f"Phase {phase.id} Failed",
             f"Max attempts ({max_attempts}) reached",
         )
+        # GitHub sync: phase failed
+        await self._github_sync_phase_failed(phase)
         # Auto-commit at phase boundary (failure - respects commit_on_failure setting)
         self._auto_commit_phase(phase, success=False)
         return False
+
+    async def _github_sync_phase_complete(self, phase: Phase) -> None:
+        """Update GitHub sync on phase completion."""
+        if not self._github_sync:
+            return
+
+        try:
+            results = await self._github_sync.on_phase_complete(phase)
+            for r in results:
+                if r.success:
+                    self.ui.log_raw(f"[dim]GitHub: {r.message}[/dim]")
+
+            # Update milestone progress
+            assert self.plan is not None
+            completed = sum(1 for p in self.plan.phases if p.status == PhaseStatus.COMPLETED)
+            result = await self._github_sync.update_milestone_progress(completed, len(self.plan.phases))
+            if result and result.success:
+                self.ui.log_raw(f"[dim]GitHub: {result.message}[/dim]")
+
+        except Exception as e:
+            logger.warning(f"GitHub sync phase complete failed: {e}")
+
+    async def _github_sync_phase_failed(self, phase: Phase) -> None:
+        """Update GitHub sync on phase failure."""
+        if not self._github_sync:
+            return
+
+        try:
+            results = await self._github_sync.on_phase_failed(phase)
+            for r in results:
+                if r.success:
+                    self.ui.log_raw(f"[dim]GitHub: {r.message}[/dim]")
+        except Exception as e:
+            logger.warning(f"GitHub sync phase failed: {e}")
 
     def _save_learnings_to_ltm(self, phase: Phase) -> None:
         """Extract learnings from phase notes and save to LTM."""

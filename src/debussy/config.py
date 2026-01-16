@@ -18,6 +18,27 @@ class NotificationConfig(BaseModel):
     ntfy_topic: str = "claude-debussy"
 
 
+class GitHubLabelConfig(BaseModel):
+    """Label configuration for GitHub sync."""
+
+    in_progress: str = Field(default="debussy:in-progress", description="Label for running phases")
+    completed: str = Field(default="debussy:completed", description="Label for completed phases")
+    failed: str = Field(default="debussy:failed", description="Label for failed phases")
+    color_in_progress: str = Field(default="1D76DB", description="Hex color for in-progress label (blue)")
+    color_completed: str = Field(default="0E8A16", description="Hex color for completed label (green)")
+    color_failed: str = Field(default="D93F0B", description="Hex color for failed label (red)")
+
+
+class GitHubSyncConfig(BaseModel):
+    """GitHub issue sync settings."""
+
+    enabled: bool = Field(default=False, description="Enable GitHub issue synchronization")
+    auto_close: bool = Field(default=False, description="Auto-close issues when plan completes")
+    labels: GitHubLabelConfig = Field(default_factory=GitHubLabelConfig)
+    create_labels_if_missing: bool = Field(default=True, description="Create labels if they don't exist")
+    dry_run: bool = Field(default=False, description="Log operations without executing")
+
+
 class Config(BaseModel):
     """Debussy configuration.
 
@@ -33,6 +54,7 @@ class Config(BaseModel):
     output: Literal["terminal", "file", "both"] = Field(default="terminal", description="Output mode: terminal, file, or both")
     interactive: bool = Field(default=True, description="Interactive mode with dashboard UI")
     notifications: NotificationConfig = Field(default_factory=NotificationConfig)
+    github: GitHubSyncConfig = Field(default_factory=GitHubSyncConfig)
     strict_compliance: bool = Field(default=True, description="Fail on any compliance issue")
     learnings: bool = Field(
         default=False,

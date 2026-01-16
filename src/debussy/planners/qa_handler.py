@@ -127,10 +127,7 @@ class QAHandler:
         # Generate options
         options: list[QuestionOption]
         if default_options:
-            options = [
-                QuestionOption(label=opt, description=f"Select {opt}")
-                for opt in default_options[:4]
-            ]
+            options = [QuestionOption(label=opt, description=f"Select {opt}") for opt in default_options[:4]]
         else:
             # Generic options for open-ended questions
             options = [

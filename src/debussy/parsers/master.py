@@ -16,6 +16,9 @@ def parse_master_plan(master_path: Path) -> MasterPlan:
     ```markdown
     # Feature Name - Master Plan
 
+    **GitHub Issues:** #10, #11
+    **GitHub Repo:** owner/repo
+
     ## Phases
 
     | Phase | Title | Focus | Risk | Status |
@@ -33,10 +36,16 @@ def parse_master_plan(master_path: Path) -> MasterPlan:
     # Find the phases table
     phases = _parse_phases_table(content, master_path.parent)
 
+    # Extract GitHub sync metadata
+    github_issues = _parse_github_issues(content)
+    github_repo = _parse_github_repo(content)
+
     return MasterPlan(
         name=name,
         path=master_path,
         phases=phases,
+        github_issues=github_issues,
+        github_repo=github_repo,
         created_at=datetime.now(),
     )
 
@@ -98,3 +107,62 @@ def _parse_status(status_str: str) -> PhaseStatus:
         "awaiting_human": PhaseStatus.AWAITING_HUMAN,
     }
     return status_map.get(status_str.lower(), PhaseStatus.PENDING)
+
+
+def _parse_github_issues(content: str) -> str | None:
+    """Extract GitHub issues from master plan content.
+
+    Supports formats:
+    - **GitHub Issues:** #10, #11
+    - **github_issues:** [10, 11]
+    - GitHub Issues: #10
+
+    Args:
+        content: Master plan markdown content.
+
+    Returns:
+        Raw issues string if found, None otherwise.
+    """
+    # Match various formats for GitHub issues
+    patterns = [
+        r"\*\*(?:GitHub\s*Issues?|github_issues)\*\*:\s*(.+?)(?:\n|$)",  # **GitHub Issues:** ...
+        r"(?:GitHub\s*Issues?|github_issues):\s*(.+?)(?:\n|$)",  # GitHub Issues: ...
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, content, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+
+    return None
+
+
+def _parse_github_repo(content: str) -> str | None:
+    """Extract GitHub repo from master plan content.
+
+    Supports formats:
+    - **GitHub Repo:** owner/repo
+    - **github_repo:** owner/repo
+    - GitHub Repo: owner/repo
+
+    Args:
+        content: Master plan markdown content.
+
+    Returns:
+        Repository string (owner/repo) if found, None otherwise.
+    """
+    # Match various formats for GitHub repo
+    patterns = [
+        r"\*\*(?:GitHub\s*Repo|github_repo)\*\*:\s*([^\s\n]+)",  # **GitHub Repo:** ...
+        r"(?:GitHub\s*Repo|github_repo):\s*([^\s\n]+)",  # GitHub Repo: ...
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, content, re.IGNORECASE)
+        if match:
+            repo = match.group(1).strip()
+            # Validate it looks like owner/repo
+            if "/" in repo:
+                return repo
+
+    return None

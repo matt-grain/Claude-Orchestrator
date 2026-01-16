@@ -93,6 +93,14 @@ class MasterPlan(BaseModel):
     name: str
     path: Path
     phases: list[Phase]
+    github_issues: list[int] | str | None = Field(
+        default=None,
+        description="GitHub issue numbers to sync (e.g., [10, 11] or '#10, #11')",
+    )
+    github_repo: str | None = Field(
+        default=None,
+        description="GitHub repo for sync (e.g., 'owner/repo'). Auto-detected if not set.",
+    )
     created_at: datetime = Field(default_factory=datetime.now)
 
 

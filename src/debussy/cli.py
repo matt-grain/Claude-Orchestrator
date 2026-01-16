@@ -259,6 +259,20 @@ def run(
             help="Fallback: restart after N tool calls. Default: 100",
         ),
     ] = None,
+    auto_close_issues: Annotated[
+        bool,
+        typer.Option(
+            "--auto-close",
+            help="Auto-close linked GitHub issues when plan completes",
+        ),
+    ] = False,
+    dry_run_sync: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run-sync",
+            help="Preview GitHub sync operations without executing",
+        ),
+    ] = False,
 ) -> None:
     """Start orchestrating a master plan."""
     if dry_run:
@@ -320,6 +334,11 @@ def run(
         config.max_restarts = max_restarts
     if tool_call_threshold is not None:
         config.tool_call_threshold = tool_call_threshold
+    # CLI flags override config for GitHub sync
+    if auto_close_issues:
+        config.github.auto_close = True
+    if dry_run_sync:
+        config.github.dry_run = True
 
     # Security warning for non-sandboxed mode
     if config.sandbox_mode == "none" and not accept_risks:
