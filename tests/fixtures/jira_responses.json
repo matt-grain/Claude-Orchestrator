@@ -1,0 +1,60 @@
+{
+  "issue": {
+    "key": "PROJ-123",
+    "fields": {
+      "summary": "Test Issue",
+      "status": {
+        "name": "To Do",
+        "id": "10000"
+      },
+      "project": {
+        "key": "PROJ",
+        "name": "Test Project"
+      },
+      "description": "Test issue description"
+    }
+  },
+  "transitions": {
+    "transitions": [
+      {
+        "id": "11",
+        "name": "In Progress",
+        "to": {
+          "name": "In Progress",
+          "id": "10001"
+        }
+      },
+      {
+        "id": "21",
+        "name": "Done",
+        "to": {
+          "name": "Done",
+          "id": "10002"
+        }
+      },
+      {
+        "id": "31",
+        "name": "In Review",
+        "to": {
+          "name": "In Review",
+          "id": "10003"
+        }
+      }
+    ]
+  },
+  "transition_success": {
+    "status": "ok"
+  },
+  "error_not_found": {
+    "errorMessages": [
+      "Issue does not exist or you do not have permission to see it."
+    ],
+    "errors": {}
+  },
+  "error_transition_invalid": {
+    "errorMessages": [
+      "It seems that you have tried to perform a workflow operation (In Progress) that is not valid for the current state of this issue (PROJ-123). The likely cause is that somebody has changed the issue recently, please look at the issue history for details."
+    ],
+    "errors": {}
+  }
+}

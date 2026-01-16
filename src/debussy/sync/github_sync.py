@@ -407,11 +407,7 @@ class GitHubSyncCoordinator:
 
             # Check if we already have a progress line and update it
             current_desc = milestone.description or ""
-            new_desc = (
-                re.sub(r"\n\n📊 \*\*Debussy Progress:\*\* .*", progress_line, current_desc)
-                if "**Debussy Progress:**" in current_desc
-                else current_desc + progress_line
-            )
+            new_desc = re.sub(r"\n\n📊 \*\*Debussy Progress:\*\* .*", progress_line, current_desc) if "**Debussy Progress:**" in current_desc else current_desc + progress_line
 
             await self.client.update_milestone_description(
                 self._milestone_number,

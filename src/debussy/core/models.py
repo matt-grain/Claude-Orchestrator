@@ -101,6 +101,10 @@ class MasterPlan(BaseModel):
         default=None,
         description="GitHub repo for sync (e.g., 'owner/repo'). Auto-detected if not set.",
     )
+    jira_issues: list[str] | str | None = Field(
+        default=None,
+        description="Jira issue keys to sync (e.g., ['PROJ-123', 'PROJ-124'] or 'PROJ-123, PROJ-124')",
+    )
     created_at: datetime = Field(default_factory=datetime.now)
 
 

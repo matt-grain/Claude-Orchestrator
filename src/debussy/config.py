@@ -39,6 +39,27 @@ class GitHubSyncConfig(BaseModel):
     dry_run: bool = Field(default=False, description="Log operations without executing")
 
 
+class JiraTransitionConfig(BaseModel):
+    """Jira workflow transition mapping for phase lifecycle events."""
+
+    on_phase_start: str | None = Field(default=None, description="Transition name when phase starts (e.g., 'In Development')")
+    on_phase_complete: str | None = Field(default=None, description="Transition name when phase completes (e.g., 'Code Review')")
+    on_plan_complete: str | None = Field(default=None, description="Transition name when all phases complete (e.g., 'Done')")
+
+
+class JiraConfig(BaseModel):
+    """Jira issue sync settings.
+
+    Requires JIRA_API_TOKEN environment variable for authentication.
+    Token should have permissions to read issues and perform transitions.
+    """
+
+    enabled: bool = Field(default=False, description="Enable Jira issue synchronization")
+    url: str = Field(default="", description="Jira instance URL (e.g., https://company.atlassian.net)")
+    transitions: JiraTransitionConfig = Field(default_factory=JiraTransitionConfig)
+    dry_run: bool = Field(default=True, description="Log operations without executing (default: True for safety)")
+
+
 class Config(BaseModel):
     """Debussy configuration.
 
@@ -55,6 +76,7 @@ class Config(BaseModel):
     interactive: bool = Field(default=True, description="Interactive mode with dashboard UI")
     notifications: NotificationConfig = Field(default_factory=NotificationConfig)
     github: GitHubSyncConfig = Field(default_factory=GitHubSyncConfig)
+    jira: JiraConfig = Field(default_factory=JiraConfig)
     strict_compliance: bool = Field(default=True, description="Fail on any compliance issue")
     learnings: bool = Field(
         default=False,

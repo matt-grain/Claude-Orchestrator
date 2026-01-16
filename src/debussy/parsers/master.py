@@ -40,12 +40,16 @@ def parse_master_plan(master_path: Path) -> MasterPlan:
     github_issues = _parse_github_issues(content)
     github_repo = _parse_github_repo(content)
 
+    # Extract Jira sync metadata
+    jira_issues = _parse_jira_issues(content)
+
     return MasterPlan(
         name=name,
         path=master_path,
         phases=phases,
         github_issues=github_issues,
         github_repo=github_repo,
+        jira_issues=jira_issues,
         created_at=datetime.now(),
     )
 
@@ -164,5 +168,33 @@ def _parse_github_repo(content: str) -> str | None:
             # Validate it looks like owner/repo
             if "/" in repo:
                 return repo
+
+    return None
+
+
+def _parse_jira_issues(content: str) -> str | None:
+    """Extract Jira issue keys from master plan content.
+
+    Supports formats:
+    - **Jira Issues:** PROJ-123, PROJ-124
+    - **jira_issues:** [PROJ-123, PROJ-124]
+    - Jira Issues: PROJ-123
+
+    Args:
+        content: Master plan markdown content.
+
+    Returns:
+        Raw issues string if found, None otherwise.
+    """
+    # Match various formats for Jira issues
+    patterns = [
+        r"\*\*(?:Jira\s*Issues?|jira_issues)\*\*:\s*(.+?)(?:\n|$)",  # **Jira Issues:** ...
+        r"(?:Jira\s*Issues?|jira_issues):\s*(.+?)(?:\n|$)",  # Jira Issues: ...
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, content, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
 
     return None

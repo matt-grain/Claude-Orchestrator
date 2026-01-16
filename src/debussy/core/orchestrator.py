@@ -34,6 +34,7 @@ from debussy.ui import NonInteractiveUI, OrchestratorUI, TextualUI, UIState, Use
 if TYPE_CHECKING:
     from debussy.core.models import ComplianceIssue
     from debussy.sync.github_sync import GitHubSyncCoordinator
+    from debussy.sync.jira_sync import JiraSynchronizer
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,9 @@ class Orchestrator:
 
         # GitHub sync coordinator (initialized in load_plan if enabled)
         self._github_sync: GitHubSyncCoordinator | None = None
+
+        # Jira sync coordinator (initialized in run if enabled)
+        self._jira_sync: JiraSynchronizer | None = None
 
     def _on_token_stats(self, stats: TokenStats) -> None:
         """Handle token stats from Claude runner."""
@@ -260,6 +264,43 @@ class Orchestrator:
             await self._github_sync.__aexit__(None, None, None)
             self._github_sync = None
 
+    async def _init_jira_sync(self) -> None:
+        """Initialize Jira sync if enabled and plan has linked issues."""
+        if not self.config.jira.enabled:
+            return
+
+        if not self.config.jira.url:
+            logger.warning("Jira sync enabled but no URL configured")
+            return
+
+        if self.plan is None or not self.plan.jira_issues:
+            logger.debug("Jira sync enabled but no issues linked in plan")
+            return
+
+        try:
+            from debussy.sync.jira_sync import JiraSynchronizer
+
+            self._jira_sync = JiraSynchronizer(config=self.config.jira)
+            await self._jira_sync.__aenter__()
+
+            # Initialize from plan metadata
+            valid_issues = await self._jira_sync.initialize_from_plan(self.plan.jira_issues)
+
+            if valid_issues:
+                self.ui.log_raw(f"[dim]Jira sync: {len(valid_issues)} issue(s) linked[/dim]")
+            else:
+                logger.warning("No valid Jira issues found from plan metadata")
+
+        except Exception as e:
+            logger.warning(f"Failed to initialize Jira sync: {e}")
+            self._jira_sync = None
+
+    async def _cleanup_jira_sync(self) -> None:
+        """Clean up Jira sync coordinator."""
+        if self._jira_sync:
+            await self._jira_sync.__aexit__(None, None, None)
+            self._jira_sync = None
+
     async def run(
         self,
         start_phase: str | None = None,
@@ -293,6 +334,9 @@ class Orchestrator:
 
         # Initialize GitHub sync if enabled
         await self._init_github_sync()
+
+        # Initialize Jira sync if enabled
+        await self._init_jira_sync()
 
         try:
             # Build effective skip_phases by checking state.db (source of truth)
@@ -369,6 +413,16 @@ class Orchestrator:
                 except Exception as e:
                     logger.warning(f"GitHub sync plan complete failed: {e}")
 
+            # Jira sync: transition issues on plan complete
+            if self._jira_sync:
+                try:
+                    results = await self._jira_sync.on_plan_complete()
+                    for r in results:
+                        if r.success:
+                            self.ui.log_raw(f"[dim]Jira: {r.message}[/dim]")
+                except Exception as e:
+                    logger.warning(f"Jira sync plan complete failed: {e}")
+
         except KeyboardInterrupt:
             self.state.update_run_status(run_id, RunStatus.PAUSED)
             self.notifier.warning("Orchestration Paused", "Interrupted by user")
@@ -380,6 +434,8 @@ class Orchestrator:
         finally:
             # Cleanup GitHub sync
             await self._cleanup_github_sync()
+            # Cleanup Jira sync
+            await self._cleanup_jira_sync()
             self.ui.stop()
 
         return run_id
@@ -583,6 +639,16 @@ class Orchestrator:
             except Exception as e:
                 logger.warning(f"GitHub sync phase start failed: {e}")
 
+        # Jira sync: phase start
+        if self._jira_sync:
+            try:
+                results = await self._jira_sync.on_phase_start(phase)
+                for r in results:
+                    if r.success:
+                        self.ui.log_raw(f"[dim]Jira: {r.message}[/dim]")
+            except Exception as e:
+                logger.warning(f"Jira sync phase start failed: {e}")
+
         for attempt in range(1, max_attempts + 1):
             # Create execution record
             self.state.create_phase_execution(run_id, phase.id, attempt)
@@ -637,6 +703,8 @@ class Orchestrator:
                 )
                 # GitHub sync: phase complete
                 await self._github_sync_phase_complete(phase)
+                # Jira sync: phase complete
+                await self._jira_sync_phase_complete(phase)
                 # Save learnings to LTM if enabled
                 if self.config.learnings:
                     self._save_learnings_to_ltm(phase)
@@ -658,6 +726,8 @@ class Orchestrator:
                     phase.status = PhaseStatus.COMPLETED  # Update in-memory status
                     # GitHub sync: phase complete (even with warnings)
                     await self._github_sync_phase_complete(phase)
+                    # Jira sync: phase complete (even with warnings)
+                    await self._jira_sync_phase_complete(phase)
                     # Save learnings to LTM if enabled (even with warnings)
                     if self.config.learnings:
                         self._save_learnings_to_ltm(phase)
@@ -739,6 +809,19 @@ class Orchestrator:
                     self.ui.log_raw(f"[dim]GitHub: {r.message}[/dim]")
         except Exception as e:
             logger.warning(f"GitHub sync phase failed: {e}")
+
+    async def _jira_sync_phase_complete(self, phase: Phase) -> None:
+        """Update Jira sync on phase completion."""
+        if not self._jira_sync:
+            return
+
+        try:
+            results = await self._jira_sync.on_phase_complete(phase)
+            for r in results:
+                if r.success:
+                    self.ui.log_raw(f"[dim]Jira: {r.message}[/dim]")
+        except Exception as e:
+            logger.warning(f"Jira sync phase complete failed: {e}")
 
     def _save_learnings_to_ltm(self, phase: Phase) -> None:
         """Extract learnings from phase notes and save to LTM."""
