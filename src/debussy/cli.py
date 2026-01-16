@@ -366,17 +366,21 @@ def run(
                 raise typer.Exit(0)
 
     # Check for dirty working directory (if auto-commit enabled and not --allow-dirty)
+    # Note: Untracked files are ignored - only tracked changes trigger the warning
     if config.auto_commit and not allow_dirty:
-        from debussy.core.orchestrator import Orchestrator
+        from debussy.utils.git import check_working_directory
 
-        # Create a temporary orchestrator just to check the directory
-        temp_orchestrator = Orchestrator(master_plan, config, project_root=Path.cwd())
-        is_clean, file_count = temp_orchestrator.check_clean_working_directory()
+        is_clean, file_count, modified_files = check_working_directory(Path.cwd())
         if not is_clean:
             console.print()
-            console.print("[bold yellow]⚠️  DIRTY WORKING DIRECTORY[/bold yellow]")
+            console.print("[bold yellow]⚠️  UNCOMMITTED CHANGES[/bold yellow]")
             console.print()
-            console.print(f"Found {file_count} uncommitted file(s) in working directory.")
+            console.print(f"Found {file_count} modified tracked file(s):")
+            for file_path in modified_files:
+                console.print(f"  [dim]•[/dim] {file_path}")
+            if file_count > len(modified_files):
+                console.print(f"  [dim]... and {file_count - len(modified_files)} more[/dim]")
+            console.print()
             console.print("Auto-commit is enabled, which may commit these changes.")
             console.print()
             console.print("[bold]Options:[/bold]")

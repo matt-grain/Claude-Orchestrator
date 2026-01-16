@@ -180,7 +180,7 @@ Options:
   --accept-risks       Skip security warning in non-interactive mode without sandbox
   --auto-commit        Commit changes at phase boundaries (default)
   --no-auto-commit     Disable auto-commit at phase boundaries
-  --allow-dirty        Allow starting with uncommitted changes
+  --allow-dirty        Skip warning about modified tracked files (untracked files are always ignored)
   --context-threshold  Context usage % to trigger restart (0-100, default: 80)
   --tool-call-threshold Fallback: restart after N tool calls (default: 100)
   --max-restarts       Max restart attempts per phase (default: 3, 0 to disable)
@@ -272,6 +272,9 @@ sandbox_mode: none     # none (direct) or devcontainer (Docker)
 # Auto-commit at phase boundaries
 auto_commit: true      # Commit after each phase (default: true)
 commit_on_failure: false  # Also commit failed phases (default: false)
+
+# Note: The dirty check only warns about modified tracked files.
+# Untracked files (notes/, .debussy/, temp files) are ignored.
 
 # Context monitoring (smart restart when approaching context limits)
 context_threshold: 80.0   # Restart when estimated usage hits 80% (set to 100 to disable)

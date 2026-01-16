@@ -266,11 +266,15 @@ class TestAutoCommitPhase:
 
 
 class TestCheckCleanWorkingDirectory:
-    """Tests for check_clean_working_directory() method."""
+    """Tests for check_clean_working_directory() method.
+
+    Note: The method now returns (is_clean, count, modified_files) tuple
+    and only counts tracked changes (untracked files are ignored).
+    """
 
     @patch("subprocess.run")
     def test_returns_true_for_clean_directory(self, mock_run: MagicMock) -> None:
-        """check_clean_working_directory returns (True, 0) for clean directory."""
+        """check_clean_working_directory returns (True, 0, []) for clean directory."""
         from debussy.core.orchestrator import Orchestrator
 
         mock_run.return_value = MagicMock(returncode=0, stdout="")
@@ -279,33 +283,41 @@ class TestCheckCleanWorkingDirectory:
             orchestrator = Orchestrator.__new__(Orchestrator)
             orchestrator.project_root = Path("/test/project")
 
-            is_clean, count = orchestrator.check_clean_working_directory()
+            is_clean, count, files = orchestrator.check_clean_working_directory()
 
         assert is_clean is True
         assert count == 0
+        assert files == []
 
     @patch("subprocess.run")
     def test_returns_false_for_dirty_directory(self, mock_run: MagicMock) -> None:
-        """check_clean_working_directory returns (False, N) for dirty directory."""
+        """check_clean_working_directory returns (False, N, files) for dirty directory.
+
+        Note: Untracked files (??) are no longer counted as dirty.
+        Only tracked modifications (M, A, D, etc.) are counted.
+        """
         from debussy.core.orchestrator import Orchestrator
 
+        # Use proper porcelain format: "XY file"
         mock_run.return_value = MagicMock(
             returncode=0,
-            stdout="M file1.py\nM file2.py\n?? newfile.py\n",
+            stdout=" M file1.py\n M file2.py\n?? newfile.py\n",
         )
 
         with patch.object(Orchestrator, "__init__", _noop_init):
             orchestrator = Orchestrator.__new__(Orchestrator)
             orchestrator.project_root = Path("/test/project")
 
-            is_clean, count = orchestrator.check_clean_working_directory()
+            is_clean, count, files = orchestrator.check_clean_working_directory()
 
         assert is_clean is False
-        assert count == 3
+        # Only 2 modified files count, the untracked (??) file is ignored
+        assert count == 2
+        assert set(files) == {"file1.py", "file2.py"}
 
     @patch("subprocess.run")
     def test_returns_true_when_git_not_available(self, mock_run: MagicMock) -> None:
-        """check_clean_working_directory returns (True, 0) when git not available."""
+        """check_clean_working_directory returns (True, 0, []) when git not available."""
         from debussy.core.orchestrator import Orchestrator
 
         mock_run.side_effect = FileNotFoundError()
@@ -314,14 +326,15 @@ class TestCheckCleanWorkingDirectory:
             orchestrator = Orchestrator.__new__(Orchestrator)
             orchestrator.project_root = Path("/test/project")
 
-            is_clean, count = orchestrator.check_clean_working_directory()
+            is_clean, count, files = orchestrator.check_clean_working_directory()
 
         assert is_clean is True
         assert count == 0
+        assert files == []
 
     @patch("subprocess.run")
     def test_returns_true_on_timeout(self, mock_run: MagicMock) -> None:
-        """check_clean_working_directory returns (True, 0) on timeout."""
+        """check_clean_working_directory returns (True, 0, []) on timeout."""
         import subprocess
 
         from debussy.core.orchestrator import Orchestrator
@@ -332,14 +345,15 @@ class TestCheckCleanWorkingDirectory:
             orchestrator = Orchestrator.__new__(Orchestrator)
             orchestrator.project_root = Path("/test/project")
 
-            is_clean, count = orchestrator.check_clean_working_directory()
+            is_clean, count, files = orchestrator.check_clean_working_directory()
 
         assert is_clean is True
         assert count == 0
+        assert files == []
 
     @patch("subprocess.run")
     def test_returns_true_when_not_a_git_repo(self, mock_run: MagicMock) -> None:
-        """check_clean_working_directory returns (True, 0) when not a git repo."""
+        """check_clean_working_directory returns (True, 0, []) when not a git repo."""
         from debussy.core.orchestrator import Orchestrator
 
         mock_run.return_value = MagicMock(
@@ -351,10 +365,11 @@ class TestCheckCleanWorkingDirectory:
             orchestrator = Orchestrator.__new__(Orchestrator)
             orchestrator.project_root = Path("/test/project")
 
-            is_clean, count = orchestrator.check_clean_working_directory()
+            is_clean, count, files = orchestrator.check_clean_working_directory()
 
         assert is_clean is True
         assert count == 0
+        assert files == []
 
 
 class TestCLIAutoCommitFlags:

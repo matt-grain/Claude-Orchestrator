@@ -1035,36 +1035,21 @@ class Orchestrator:
             logger.warning("Git command timed out during auto-commit")
             self.ui.log_raw("[yellow]Auto-commit timed out[/yellow]")
 
-    def check_clean_working_directory(self) -> tuple[bool, int]:
-        """Check if the working directory is clean (no uncommitted changes).
+    def check_clean_working_directory(self) -> tuple[bool, int, list[str]]:
+        """Check if the working directory has uncommitted tracked changes.
+
+        Untracked files are ignored - only modified/staged/deleted tracked files
+        are considered "dirty" for the purposes of auto-commit protection.
 
         Returns:
-            Tuple of (is_clean, uncommitted_file_count)
+            Tuple of (is_clean, tracked_change_count, modified_files_sample)
+            - is_clean: True if no tracked changes exist
+            - tracked_change_count: Number of modified/staged/deleted files
+            - modified_files_sample: Up to 10 modified file paths for display
         """
-        try:
-            result = subprocess.run(
-                ["git", "status", "--porcelain"],
-                capture_output=True,
-                text=True,
-                cwd=self.project_root,
-                timeout=10,
-                check=False,
-            )
-            if result.returncode != 0:
-                # Git not available or not a repo - consider clean
-                logger.debug(f"Git status failed: {result.stderr}")
-                return (True, 0)
+        from debussy.utils.git import check_working_directory
 
-            # Count uncommitted files
-            lines = [line for line in result.stdout.strip().split("\n") if line]
-            return (len(lines) == 0, len(lines))
-
-        except FileNotFoundError:
-            # Git not installed - consider clean
-            return (True, 0)
-        except subprocess.TimeoutExpired:
-            # Timeout - consider clean to avoid blocking
-            return (True, 0)
+        return check_working_directory(self.project_root)
 
     def _dependencies_met(self, phase: Phase) -> bool:
         """Check if all dependencies are met for a phase."""
