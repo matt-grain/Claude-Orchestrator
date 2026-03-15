@@ -393,22 +393,17 @@ class TestCLIAutoCommitFlags:
 
     def test_no_auto_commit_flag_exists(self) -> None:
         """--no-auto-commit flag is available on run command."""
-        # Check the function signature has the parameter
-        import inspect
+        from debussy.cli import app
 
-        from debussy.cli import run
-
-        sig = inspect.signature(run)
-        assert "auto_commit" in sig.parameters
+        result = CliRunner().invoke(app, ["run", "--help"])
+        assert "--no-auto-commit" in result.stdout
 
     def test_allow_dirty_flag_exists(self) -> None:
         """--allow-dirty flag is available on run command."""
-        import inspect
+        from debussy.cli import app
 
-        from debussy.cli import run
-
-        sig = inspect.signature(run)
-        assert "allow_dirty" in sig.parameters
+        result = CliRunner().invoke(app, ["run", "--help"])
+        assert "--allow-dirty" in result.stdout
 
     def test_no_auto_commit_disables_auto_commit(
         self,

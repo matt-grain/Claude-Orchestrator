@@ -76,7 +76,7 @@ class TestStatusCommand:
 
         with (
             patch("debussy.cli.StateManager") as mock_sm,
-            patch("debussy.cli._display_issue_status"),
+            patch("debussy.commands.sync._display_issue_status"),
             patch("debussy.parsers.master.parse_master_plan") as mock_parse,
             patch("debussy.config.Config") as mock_config,
         ):
@@ -95,7 +95,7 @@ class TestSyncCommand:
 
     def test_sync_no_run_found(self) -> None:
         """Test sync when no run exists."""
-        with patch("debussy.cli.StateManager") as mock_sm:
+        with patch("debussy.commands.sync.StateManager") as mock_sm:
             mock_sm.return_value.get_current_run.return_value = None
 
             result = runner.invoke(app, ["sync"])
@@ -105,7 +105,7 @@ class TestSyncCommand:
 
     def test_sync_invalid_direction(self, mock_run_state: MagicMock) -> None:
         """Test sync with invalid direction."""
-        with patch("debussy.cli.StateManager") as mock_sm:
+        with patch("debussy.commands.sync.StateManager") as mock_sm:
             mock_sm.return_value.get_current_run.return_value = mock_run_state
 
             result = runner.invoke(app, ["sync", "--direction", "invalid"])
@@ -123,8 +123,8 @@ class TestSyncCommand:
         mock_master_plan.jira_issues = None
 
         with (
-            patch("debussy.cli.StateManager") as mock_sm,
-            patch("debussy.cli._sync_issues"),
+            patch("debussy.commands.sync.StateManager") as mock_sm,
+            patch("debussy.commands.sync._sync_issues"),
             patch("debussy.parsers.master.parse_master_plan") as mock_parse,
             patch("debussy.config.Config") as mock_config,
         ):
