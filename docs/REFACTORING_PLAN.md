@@ -1,5 +1,7 @@
 # Debussy Refactoring Plan
 
+> **Note:** This document is historical and may not reflect the current state of the project.
+
 **Created:** 2026-01-15
 **Based on:** CODE_REVIEW_REPORT.md
 **Reviewer:** Textual TUI Expert

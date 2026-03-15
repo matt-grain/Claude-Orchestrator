@@ -1,5 +1,7 @@
 # DevContainer Sandbox Implementation Plan
 
+> **Note:** This document is historical and may not reflect the current state of the project.
+
 **Version:** 1.1
 **Date:** 2026-01-14
 **Status:** Prototype

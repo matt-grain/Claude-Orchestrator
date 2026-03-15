@@ -1,5 +1,7 @@
 # Textual TUI Code Review - Debussy Orchestrator
 
+> **Note:** This document is historical and may not reflect the current state of the project.
+
 **Date:** 2026-01-13
 **Reviewer:** textual-tui-expert agent
 **Focus:** Error handling, graceful shutdown, subprocess cleanup

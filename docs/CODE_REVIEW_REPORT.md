@@ -1,5 +1,7 @@
 # Debussy Codebase Review Report
 
+> **Note:** This document is historical and may not reflect the current state of the project.
+
 **Date:** 2026-01-15
 **Reviewer:** Python Task Validator
 **Codebase Version:** v0.3.16 (commit 29dd78f)

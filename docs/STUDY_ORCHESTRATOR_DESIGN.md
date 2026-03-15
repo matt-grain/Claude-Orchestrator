@@ -1,5 +1,7 @@
 # Claude Debussy Design Study
 
+> **Note:** This document is historical and may not reflect the current state of the project.
+
 **Created:** 2026-01-12
 **Author:** Anima + Matt
 **Status:** Draft - Awaiting Feedback

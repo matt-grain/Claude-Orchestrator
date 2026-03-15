@@ -1,5 +1,7 @@
 # UI/Logic Separation Architecture Plan
 
+> **Note:** This document is historical and may not reflect the current state of the project.
+
 **Issue:** #5 from TUI_CODE_REVIEW.md - "UI/business logic mixed in DebussyTUI"
 **Date:** 2026-01-13
 **Status:** Complete

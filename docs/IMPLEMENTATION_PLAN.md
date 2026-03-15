@@ -1,5 +1,7 @@
 # Claude Debussy - Implementation Plan
 
+> **Note:** This document is historical and may not reflect the current state of the project.
+
 **Created:** 2026-01-12
 **Status:** v0.1.1 Released
 **Version:** 0.1.1

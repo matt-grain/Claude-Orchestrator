@@ -1,5 +1,10 @@
 # Claude Debussy
 
+> **Status:** Portfolio project — demonstrates multi-phase AI orchestration patterns.
+> Built before official Claude orchestration features existed.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for system design.
+
 A Python (Claude) Debussy for multi-phase Claude CLI sessions with compliance verification, state persistence, and real-time streaming output.
 
 ## Overview
