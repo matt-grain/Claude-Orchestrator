@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Literal, TextIO
 
 from debussy.core.models import ComplianceIssue, ExecutionResult, Phase
 from debussy.runners.docker_builder import DockerCommandBuilder
+from debussy.runners.prompt_builder import build_phase_prompt, build_remediation_prompt
+from debussy.runners.streaming import StreamingMixin
 
 if TYPE_CHECKING:
     from debussy.runners.context_estimator import ContextEstimator
@@ -224,7 +226,7 @@ class TokenStats:
         return self.input_tokens + self.cache_read_tokens + self.cache_creation_tokens
 
 
-class ClaudeRunner:
+class ClaudeRunner(StreamingMixin):
     """Spawns and monitors Claude CLI sessions."""
 
     def __init__(
@@ -587,191 +589,6 @@ class ClaudeRunner:
             kwargs["start_new_session"] = True
         return kwargs
 
-    async def _stream_json_reader(
-        self,
-        stream: asyncio.StreamReader,
-        output_list: list[str],
-    ) -> tuple[str, bool]:
-        """Read JSON stream and display content in real-time.
-
-        Returns:
-            Tuple of (full_text_content, was_stopped)
-            - full_text_content: The session log text
-            - was_stopped: True if graceful stop was triggered
-        """
-        # Create parser for this session
-        self._parser = self._create_parser()
-        was_stopped = False
-
-        while True:
-            # Check for graceful stop request
-            if self._should_stop:
-                logger.info("Graceful stop: terminating stream read")
-                was_stopped = True
-                break
-
-            line = await stream.readline()
-            if not line:
-                break
-
-            decoded = line.decode("utf-8", errors="replace").strip()
-            output_list.append(decoded + "\n")
-
-            if not decoded:
-                continue
-
-            # Parser handles JSON parsing and emits callbacks
-            self._parser.parse_line(decoded)
-
-        return self._parser.get_full_text(), was_stopped
-
-    def _display_stream_event(self, event: dict, full_text: list[str]) -> None:
-        """Display a streaming event and collect text content."""
-        event_type = event.get("type", "")
-
-        # Handle assistant text output
-        if event_type == "assistant":
-            message = event.get("message", {})
-            content_list = message.get("content", [])
-            for content in content_list:
-                if content.get("type") == "text":
-                    text = content.get("text", "")
-                    if text and self.stream_output:
-                        self._write_output(text)
-                    full_text.append(text)
-                elif content.get("type") == "tool_use":
-                    self._display_tool_use(content)
-            # Extract per-turn usage stats
-            self._handle_assistant_usage(message)
-
-        # Handle content block deltas (streaming chunks)
-        elif event_type == "content_block_delta":
-            delta = event.get("delta", {})
-            if delta.get("type") == "text_delta":
-                text = delta.get("text", "")
-                if text and self.stream_output:
-                    self._write_output(text)
-                full_text.append(text)
-
-        # Handle tool results from user messages
-        elif event_type == "user":
-            message = event.get("message", {})
-            content_list = message.get("content", [])
-            for content in content_list:
-                if content.get("type") == "tool_result":
-                    self._display_tool_result(content, event.get("tool_use_result", ""))
-
-        # Handle result event (final) - extract token stats
-        elif event_type == "result":
-            self._handle_result_event(event)
-
-    def _handle_assistant_usage(self, message: dict) -> None:
-        """Extract per-turn usage stats from assistant message."""
-        if not self._token_stats_callback:
-            return
-
-        usage = message.get("usage", {})
-        if not usage:
-            return
-
-        # Per-turn stats - these are cumulative within the session
-        stats = TokenStats(
-            input_tokens=usage.get("input_tokens", 0),
-            output_tokens=usage.get("output_tokens", 0),
-            cache_read_tokens=usage.get("cache_read_input_tokens", 0),
-            cache_creation_tokens=usage.get("cache_creation_input_tokens", 0),
-            cost_usd=0.0,  # Cost only available in final result
-            context_window=200_000,
-        )
-        self._token_stats_callback(stats)
-
-    def _handle_result_event(self, event: dict) -> None:
-        """Extract final token stats from the result event (includes cost)."""
-        if not self._token_stats_callback:
-            return
-
-        usage = event.get("usage", {})
-        model_usage = event.get("modelUsage", {})
-
-        # Get context window from model usage (any model will do)
-        context_window = 200_000
-        for model_data in model_usage.values():
-            if "contextWindow" in model_data:
-                context_window = model_data["contextWindow"]
-                break
-
-        # Final result has session totals and cost
-        stats = TokenStats(
-            input_tokens=usage.get("input_tokens", 0),
-            output_tokens=usage.get("output_tokens", 0),
-            cache_read_tokens=usage.get("cache_read_input_tokens", 0),
-            cache_creation_tokens=usage.get("cache_creation_input_tokens", 0),
-            cost_usd=event.get("total_cost_usd", 0.0),
-            context_window=context_window,
-        )
-        self._token_stats_callback(stats)
-
-    def _display_tool_use(self, content: dict) -> None:
-        """Display tool use with relevant details."""
-        if not self.stream_output:
-            return
-
-        tool_name = content.get("name", "unknown")
-        tool_input = content.get("input", {})
-
-        # Format based on tool type
-        if tool_name in ("Read", "Write", "Edit"):
-            self._display_file_tool(tool_name, tool_input)
-        elif tool_name == "Bash":
-            self._display_bash_tool(tool_input)
-        elif tool_name in ("Glob", "Grep"):
-            pattern = tool_input.get("pattern", "")
-            self._write_output(f"[{tool_name}: {pattern}]\n")
-        elif tool_name == "TodoWrite":
-            todos = tool_input.get("todos", [])
-            self._write_output(f"[TodoWrite: {len(todos)} items]\n")
-        elif tool_name == "Task":
-            self._display_task_tool(content)
-        else:
-            self._write_output(f"[{tool_name}]\n")
-
-    def _display_file_tool(self, tool_name: str, tool_input: dict) -> None:
-        """Display Read/Write/Edit tool use."""
-        file_path = tool_input.get("file_path", "")
-        filename = file_path.split("/")[-1].split("\\")[-1] if file_path else "?"
-        self._write_output(f"[{tool_name}: {filename}]\n")
-
-    def _display_bash_tool(self, tool_input: dict) -> None:
-        """Display Bash tool use with truncated command."""
-        command = tool_input.get("command", "")
-        if len(command) > 60:
-            command = command[:57] + "..."
-        self._write_output(f"[Bash: {command}]\n")
-
-    def _display_task_tool(self, content: dict) -> None:
-        """Display Task tool use and track agent change."""
-        tool_input = content.get("input", {})
-        tool_id = content.get("id", "")
-        desc = tool_input.get("description", "")
-        subagent_type = tool_input.get("subagent_type", "")
-        self._write_output(f"[Task: {desc}]\n")
-        if subagent_type:
-            self._set_active_agent(subagent_type)
-            if tool_id:
-                self._pending_task_ids[tool_id] = subagent_type
-
-    def _set_active_agent(self, agent: str) -> None:
-        """Update the active agent and notify callback."""
-        if agent != self._current_agent:
-            self._reset_active_agent(agent)
-
-    def _reset_active_agent(self, agent: str) -> None:
-        """Force-set the active agent (even if same) and emit prefix on next output."""
-        self._current_agent = agent
-        self._needs_line_prefix = True
-        if self._agent_change_callback:
-            self._agent_change_callback(agent)
-
     def _log_execution_mode(self) -> None:
         """Log the execution mode (local or Docker sandbox) to the output."""
         if self._sandbox_mode == "devcontainer":
@@ -779,105 +596,6 @@ class ClaudeRunner:
         else:
             project_path = str(self.project_root)
             self._write_output(f"[Local: {project_path}]\n")
-
-    def _display_tool_result(self, content: dict, result_text: str) -> None:
-        """Display abbreviated tool result."""
-        tool_use_id = content.get("tool_use_id", "")
-        result_content = content.get("content", "")
-        tool_name = content.get("tool_name", "")
-
-        # Track tool output with context estimator
-        if self._context_estimator and result_text:
-            if tool_name == "Read":
-                # Track file content reads separately
-                self._context_estimator.add_file_read(result_text)
-            else:
-                # Track all other tool outputs
-                self._context_estimator.add_tool_output(result_text)
-
-            # Check if we should restart
-            if self._context_estimator.should_restart() and self._restart_callback:
-                self._restart_callback()
-
-        # Check if this is a Task tool result
-        if tool_use_id in self._pending_task_ids:
-            agent_name = self._pending_task_ids.pop(tool_use_id)
-            if self.stream_output:
-                # Task results can be list format (built-in agents) or string (custom agents)
-                if isinstance(result_content, list):
-                    self._display_subagent_output(agent_name, result_content)
-                elif isinstance(result_content, str) and result_content:
-                    self._display_subagent_output_str(agent_name, result_content)
-            self._reset_active_agent("Debussy")
-            return
-
-        if not self.stream_output:
-            return
-
-        # Check for errors
-        if content.get("is_error"):
-            error_msg = result_text or (result_content if isinstance(result_content, str) else "")
-            if len(error_msg) > 100:
-                error_msg = error_msg[:97] + "..."
-            self._write_output(f"  [ERROR: {error_msg}]\n")
-
-    def _display_subagent_output(self, agent_name: str, content_list: list) -> None:
-        """Display subagent output from Task tool result.
-
-        Task results have content as list of {type: "text", text: "..."} objects.
-        Item 0 is the full subagent reasoning/output.
-        Item 1+ may contain metadata (agentId, etc).
-        """
-        for item in content_list:
-            if not isinstance(item, dict) or item.get("type") != "text":
-                continue
-
-            text = item.get("text", "")
-            if not text:
-                continue
-
-            # Skip metadata items (agentId lines)
-            if text.startswith("agentId:"):
-                continue
-
-            # Display each meaningful line with agent prefix
-            for line in text.split("\n"):
-                stripped = line.strip()
-                if stripped:
-                    self._write_output(f"[{agent_name}] {stripped}\n")
-
-    def _display_subagent_output_str(self, agent_name: str, content: str) -> None:
-        """Display subagent output from Task tool result (string format).
-
-        Custom agents return content as a plain string, not a list.
-        """
-        if not content:
-            return
-
-        # Skip metadata lines
-        if content.startswith("agentId:"):
-            return
-
-        # Display each meaningful line with agent prefix
-        for line in content.split("\n"):
-            stripped = line.strip()
-            if stripped:
-                self._write_output(f"[{agent_name}] {stripped}\n")
-
-    async def _stream_stderr(
-        self,
-        stream: asyncio.StreamReader,
-        output_list: list[str],
-    ) -> None:
-        """Read stderr and display with prefix."""
-        while True:
-            line = await stream.readline()
-            if not line:
-                break
-            decoded = line.decode("utf-8", errors="replace")
-            output_list.append(decoded)
-            if self.stream_output:
-                self._write_output(f"[ERR] {decoded}")
 
     async def _kill_process_tree(self, process: asyncio.subprocess.Process) -> None:
         """Kill process and all its descendants (grandchildren, etc.).
@@ -1094,116 +812,11 @@ class ClaudeRunner:
             )
 
     def _build_phase_prompt(self, phase: Phase, with_ltm: bool = False) -> str:
-        """Build the prompt for a phase execution."""
+        """Build the prompt for a phase execution.
 
-        # Helper to convert Windows paths to forward slashes
-        def to_posix(p: Path | None) -> str:
-            return str(p).replace("\\", "/") if p else ""
-
-        notes_context = ""
-        if phase.notes_input and phase.notes_input.exists():
-            notes_input_str = to_posix(phase.notes_input)
-            notes_context = f"""
-## Previous Phase Notes
-Use the Read tool to read context from the previous phase: {notes_input_str}
-"""
-
-        required_agents = ""
-        if phase.required_agents:
-            agents_list = ", ".join(phase.required_agents)
-            required_agents = f"""
-## Required Agents
-You MUST invoke these agents using the Task tool: {agents_list}
-"""
-
-        notes_output = ""
-        if phase.notes_output:
-            notes_output_str = to_posix(phase.notes_output)
-            notes_output = f"""
-## Notes Output
-Use the Write tool to write notes to: {notes_output_str}
-"""
-
-        # LTM context recall for non-first phases
-        ltm_recall = ""
-        if with_ltm and phase.notes_input:
-            ltm_recall = f"""
-## Recall Previous Learnings
-Run `/recall phase:{phase.id}` to retrieve learnings from previous runs of this phase.
-"""
-
-        # LTM learnings section - ADD to Process Wrapper steps
-        ltm_learnings = ""
-        if with_ltm:
-            ltm_learnings = f"""
-## ADDITIONAL Process Wrapper Step (LTM Enabled)
-**IMPORTANT**: Add this step to the Process Wrapper BEFORE signaling completion:
-
-- [ ] **Output `## Learnings` section in your notes file** with insights from this phase:
-  - Errors encountered and how you fixed them
-  - Project-specific patterns discovered
-  - Gate failures and resolutions
-  - Tips for future runs
-
-- [ ] **Save each learning** using `/remember`:
-  ```
-  /remember --priority MEDIUM --tags phase:{phase.id},agent:Debussy "learning content"
-  ```
-
-This step is MANDATORY when LTM is enabled. Do not skip it.
-"""
-
-        # Build completion steps - vary based on LTM
-        if with_ltm:
-            completion_steps = f"""
-## Completion
-
-When the phase is complete (all tasks done, all gates passing):
-1. Write notes to the specified output path (include `## Learnings` section!)
-2. Call `/remember` for each learning you documented
-3. Signal completion: `/debussy-done {phase.id}`
-
-**Do NOT signal completion until you have saved your learnings with /remember.**
-
-Fallback (if slash commands unavailable):
-- `uv run debussy done --phase {phase.id} --status completed`
-"""
-        else:
-            completion_steps = f"""
-## Completion
-
-When the phase is complete (all tasks done, all gates passing):
-1. Write notes to the specified output path
-2. Signal completion: `/debussy-done {phase.id}`
-
-If you encounter a blocker:
-- `/debussy-done {phase.id} blocked "reason for blocker"`
-
-Fallback (if slash commands unavailable):
-- `uv run debussy done --phase {phase.id} --status completed`
-"""
-
-        phase_path_str = to_posix(phase.path)
-
-        return f"""Execute the implementation phase defined in the file: {phase_path_str}
-
-**IMPORTANT: Use the Read tool to read this file path. Do NOT try to execute paths as commands.**
-
-Read the phase plan file and follow the Process Wrapper EXACTLY.
-{notes_context}{ltm_recall}
-{required_agents}
-{notes_output}
-{ltm_learnings}
-{completion_steps}
-## Important
-
-- Follow the template Process Wrapper exactly
-- Use the Task tool to invoke required agents (don't do their work yourself)
-- Run all pre-validation commands until they pass
-- The compliance checker will verify your work - be thorough
-- **File paths are for reading with the Read tool, not executing with Bash**
-- **Slash commands like /debussy-done use the Skill tool, not Bash**
-"""
+        Delegates to prompt_builder.build_phase_prompt.
+        """
+        return build_phase_prompt(phase, with_ltm=with_ltm)
 
     def build_remediation_prompt(
         self,
@@ -1211,71 +824,8 @@ Read the phase plan file and follow the Process Wrapper EXACTLY.
         issues: list[ComplianceIssue],
         with_ltm: bool = False,
     ) -> str:
-        """Build a remediation prompt for a failed compliance check."""
+        """Build a remediation prompt for a failed compliance check.
 
-        # Helper to convert Windows paths to forward slashes
-        def to_posix(p: Path | None) -> str:
-            return str(p).replace("\\", "/") if p else ""
-
-        issues_text = "\n".join(f"- [{issue.severity.upper()}] {issue.type.value}: {issue.details}" for issue in issues)
-
-        notes_output_str = to_posix(phase.notes_output)
-        required_actions: list[str] = []
-        for issue in issues:
-            if issue.type.value == "agent_skipped":
-                agent_name = issue.details.split("'")[1]
-                required_actions.append(f"- Invoke the {agent_name} agent using Task tool")
-            elif issue.type.value == "notes_missing":
-                required_actions.append(f"- Write notes to: {notes_output_str}")
-            elif issue.type.value == "notes_incomplete":
-                required_actions.append("- Complete all required sections in the notes file")
-            elif issue.type.value == "gates_failed":
-                required_actions.append(f"- Fix failing gate: {issue.details}")
-            elif issue.type.value == "step_skipped":
-                required_actions.append(f"- Complete step: {issue.details}")
-
-        default_action = "- Review and fix all issues"
-        actions_text = "\n".join(required_actions) if required_actions else default_action
-
-        # LTM recall for remediation context
-        ltm_section = ""
-        if with_ltm:
-            ltm_section = f"""
-## Recall Previous Attempts (LTM Enabled)
-Use the Skill tool to run: /recall phase:{phase.id}
-This may include fixes for similar issues encountered before.
-"""
-
-        # LTM learnings for remediation
-        ltm_learnings = ""
-        if with_ltm:
-            ltm_learnings = f"""
-## Save Remediation Learnings
-After fixing the issues, use the Skill tool to save what you learned:
-/remember --priority HIGH --tags phase:{phase.id},agent:Debussy,remediation "description of fix"
-High priority ensures this learning persists for future remediation attempts.
-"""
-
-        phase_path_str = to_posix(phase.path)
-
-        return f"""REMEDIATION SESSION for Phase {phase.id}: {phase.title}
-
-The previous attempt FAILED compliance checks.
-{ltm_section}
-## Issues Found
-{issues_text}
-
-## Required Actions
-{actions_text}
-
-## Original Phase Plan
-Use the Read tool to read: {phase_path_str}
-{ltm_learnings}
-## When Complete
-Use the Skill tool to signal completion: /debussy-done {phase.id}
-
-Fallback: `uv run debussy done --phase {phase.id} --status completed`
-
-IMPORTANT: This is a remediation session. Follow the template EXACTLY.
-All required agents MUST be invoked via the Task tool - do not do their work yourself.
-"""
+        Delegates to prompt_builder.build_remediation_prompt.
+        """
+        return build_remediation_prompt(phase, issues, with_ltm=with_ltm)
